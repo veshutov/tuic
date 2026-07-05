@@ -17,7 +17,8 @@ async fn main() -> Result<()> {
     let device = Arc::new(
         DeviceBuilder::new()
             .name("utun12")
-            .ipv4("10.0.0.2", 32, None)
+            .ipv4("10.0.0.2", 24, None)
+            .mtu(1350)
             .build_async()?,
     );
     let port = 4433;
