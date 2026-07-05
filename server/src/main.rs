@@ -3,6 +3,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use quinn::Connection;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::str::FromStr;
 use std::sync::Arc;
 use tun_rs::DeviceBuilder;
 
@@ -19,7 +20,9 @@ async fn main() -> Result<()> {
             .ipv4("10.0.0.2", 32, None)
             .build_async()?,
     );
-    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5000);
+    let port = 4433;
+    println!("Server port: {}", port);
+    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str("0.0.0.0").unwrap()), port);
     let (endpoint, _server_cert) = make_server_endpoint(server_addr)?;
 
     let device_recv = device.clone();
