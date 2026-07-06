@@ -73,19 +73,19 @@ async fn main() -> Result<()> {
                         let _ = tokio::join!(recv_worker, send_worker);
                     }
                     Err(e) => {
-                        println!("Could not connect to endpoint: {}", e);
+                        println!("Could not connect to endpoint: {e}");
                         break;
                     }
                 }
             }
             Err(e) => {
-                println!("Could not connect to endpoint: {}", e);
+                println!("Could not connect to endpoint: {e}");
                 break;
             }
         }
     }
 
+    println!("Shutting down");
     endpoint.wait_idle().await;
-    println!("Finished");
     Ok(())
 }
