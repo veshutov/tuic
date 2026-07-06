@@ -23,55 +23,69 @@ async fn main() -> Result<()> {
         DeviceBuilder::new()
             .name("utun11")
             .ipv4("10.0.0.1", 24, None)
-            .mtu(1350)
+            .mtu(1100)
             .build_async()?,
     );
-    let server_addr = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::from_str(server_ip).unwrap()),
-        4433,
-    );
+    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), 4433);
 
     let cert_bytes = std::fs::read("../server/server_cert.der")?;
     let server_cert = CertificateDer::from(cert_bytes);
 
-    let endpoint = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
-    // connect to server
-    let connection = endpoint
-        .connect(server_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
-    println!("Connected to server {}", connection.remote_address());
-
-    let connection_send = connection.clone();
-    let device_send = device.clone();
-    tokio::spawn(async move {
-        let connection = connection_send.clone();
-        let device = device_send.clone();
-        let mut read_buf: Vec<u8> = vec![0; 65536];
-        loop {
-            let read = device.recv(&mut read_buf).await.unwrap();
-            println!("[device] read: {}", read);
-            connection
-                .send_datagram(Bytes::copy_from_slice(&read_buf[0..read]))
-                .unwrap();
-            println!("[server] sent {}", read);
-        }
-    });
+    let endpoint = make_client_endpoint("0.0.0.0:0".parse()?, &[&server_cert])?;
 
     loop {
-        let read = connection.read_datagram().await.unwrap();
-        println!("[server] read: {}", read.len());
+        match endpoint.connect(server_addr, "localhost") {
+            Ok(connecting) => {
+                match connecting.await {
+                    Ok(connection) => {
+                        println!("Connected to server {}", connection.remote_address());
 
-        let sent = device.send(&read).await.unwrap();
-        println!("[device] sent: {}", sent);
+                        let connection_recv = connection.clone();
+                        let device_recv = device.clone();
+
+                        let recv_worker = tokio::spawn(async move {
+                            let connection = connection_recv.clone();
+                            let device = device_recv.clone();
+                            let mut read_buf: Vec<u8> = vec![0; 65536];
+                            loop {
+                                let read = device.recv(&mut read_buf).await.unwrap();
+                                // println!("[device] read: {}", read);
+                                connection
+                                    .send_datagram(Bytes::copy_from_slice(&read_buf[0..read]))
+                                    .unwrap();
+                                // println!("[server] sent {}", read);
+                            }
+                        });
+
+                        let connection_send = connection.clone();
+                        let device_send = device.clone();
+
+                        let send_worker = tokio::spawn(async move {
+                            loop {
+                                let read = connection_send.read_datagram().await.unwrap();
+                                // println!("[server] read: {}", read.len());
+
+                                let _sent = device_send.send(&read).await.unwrap();
+                                // println!("[device] sent: {}", sent);
+                            }
+                        });
+
+                        let _ = tokio::join!(recv_worker, send_worker);
+                    }
+                    Err(e) => {
+                        println!("Could not connect to endpoint: {}", e);
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Could not connect to endpoint: {}", e);
+                break;
+            }
+        }
     }
 
-    // Waiting for a stream will complete with an error when the server closes the connection
-    let _ = connection.accept_uni().await;
-
-    // Make sure the server has a chance to clean up
     endpoint.wait_idle().await;
-
+    println!("Finished");
     Ok(())
 }
