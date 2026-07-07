@@ -26,15 +26,11 @@ async fn main() -> Result<()> {
             .mtu(1150)
             .build_async()?,
     );
-    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), 4433);
-
-    let cert_bytes = std::fs::read("../server/server_cert.der")?;
-    let server_cert = CertificateDer::from(cert_bytes);
-
-    let endpoint = make_client_endpoint("0.0.0.0:0".parse()?, &[&server_cert])?;
+    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), 443);
+    let endpoint = make_client_endpoint("0.0.0.0:0".parse()?)?;
 
     loop {
-        match endpoint.connect(server_addr, "localhost") {
+        match endpoint.connect(server_addr, common::SERVER_NAME) {
             Ok(connecting) => {
                 match connecting.await {
                     Ok(connection) => {

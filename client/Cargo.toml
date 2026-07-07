@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1.52.3", features = ["full"] }
+common = { path = "../common" }
 
-tun-rs = { version = "2.8.6", features = ["async", "async_framed"] }
-etherparse = "0.20.2"
-quinn = { version = "0.11.11", features = ["rustls-aws-lc-rs", "rustls-ring"] }
-smoltcp = "0.13.1"
-rustls = "0.23.41"
-rcgen = "0.14.8"
+tokio.workspace = true
 
-anyhow = "1.0.103"
-bytes = "1.12.0"
+tun-rs.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+
+anyhow.workspace = true
+bytes.workspace = true
