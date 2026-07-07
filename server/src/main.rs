@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
             .mtu(1150)
             .build_async()?,
     );
-    let port = 443;
+    let port = common::SERVER_PORT;
     println!("Server port: {port}");
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str("0.0.0.0")?), port);
     let (endpoint, _server_cert) = make_server_endpoint(server_addr)?;
@@ -76,10 +76,7 @@ async fn handle_connection(
     println!("Connection accepted, addr={address}");
     loop {
         let read = connection.read_datagram().await?;
-        // println!("[client] read: {}", read.len());
-
         let _sent = device.clone().send(&read).await?;
-        // println!("[remote] sent: {}", sent);
     }
 }
 
@@ -90,8 +87,6 @@ async fn handle_device(
     let mut read_buf: Vec<u8> = vec![0; 65536];
     loop {
         let read = device.recv(&mut read_buf).await?;
-        // println!("[remote] read: {}", read);
-
         if let Some(connection) = connection_map.get("connection") {
             if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&read_buf[0..read])) {
                 println!(
@@ -100,7 +95,6 @@ async fn handle_device(
                     e
                 )
             };
-            // println!("[client] sent: {}", read);
         }
     }
 }

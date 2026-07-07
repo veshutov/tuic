@@ -1,6 +1,5 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use rustls::pki_types::CertificateDer;
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
@@ -26,7 +25,7 @@ async fn main() -> Result<()> {
             .mtu(1150)
             .build_async()?,
     );
-    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), 443);
+    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), common::SERVER_PORT);
     let endpoint = make_client_endpoint("0.0.0.0:0".parse()?)?;
 
     loop {
@@ -45,11 +44,9 @@ async fn main() -> Result<()> {
                             let mut read_buf: Vec<u8> = vec![0; 65536];
                             loop {
                                 let read = device.recv(&mut read_buf).await.unwrap();
-                                // println!("[device] read: {}", read);
                                 connection
                                     .send_datagram(Bytes::copy_from_slice(&read_buf[0..read]))
                                     .unwrap();
-                                // println!("[server] sent {}", read);
                             }
                         });
 
@@ -59,10 +56,7 @@ async fn main() -> Result<()> {
                         let send_worker = tokio::spawn(async move {
                             loop {
                                 let read = connection_send.read_datagram().await.unwrap();
-                                // println!("[server] read: {}", read.len());
-
                                 let _sent = device_send.send(&read).await.unwrap();
-                                // println!("[device] sent: {}", sent);
                             }
                         });
 
