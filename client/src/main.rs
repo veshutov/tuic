@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
         DeviceBuilder::new()
             .name("utun11")
             .ipv4("10.0.0.1", 24, None)
-            .mtu(1100)
+            .mtu(1150)
             .build_async()?,
     );
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), 4433);

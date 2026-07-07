@@ -26,8 +26,7 @@ pub(crate) fn make_server_endpoint(
 fn configure_server() -> Result<(ServerConfig, CertificateDer<'static>), Error> {
     let (cert_der, key_der) = load_or_generate_cert();
     let mut server_config = ServerConfig::with_single_cert(vec![cert_der.clone()], key_der)?;
-    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
-    transport_config.max_concurrent_uni_streams(0_u8.into());
+    server_config.transport_config(Arc::new(build_transport_config()));
 
     Ok((server_config, cert_der))
 }
@@ -62,6 +61,19 @@ fn load_or_generate_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) 
 
         (cert, key)
     }
+}
+
+fn build_transport_config() -> quinn::TransportConfig {
+    let mut transport = quinn::TransportConfig::default();
+
+    transport.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
+    transport.datagram_receive_buffer_size(Some(2 * 1024 * 1024));
+    transport.datagram_send_buffer_size(2 * 1024 * 1024);
+    transport.max_concurrent_uni_streams(0u32.into());
+    transport.max_concurrent_bidi_streams(0u32.into());
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+
+    transport
 }
 
 #[allow(unused)]

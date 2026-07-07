@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
-use quinn::{Connection, Incoming};
+use quinn::{Connection, Incoming, VarInt};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
         DeviceBuilder::new()
             .name("utun12")
             .ipv4("10.0.0.2", 24, None)
-            .mtu(1100)
+            .mtu(1150)
             .build_async()?,
     );
     let port = 4433;
@@ -54,6 +54,9 @@ async fn main() -> Result<()> {
         Err(err) => println!("Unable to listen for shutdown signal: {err}"),
     }
 
+    for c in connection_map.iter() {
+        c.close(VarInt::from_u32(0), &[0]);
+    }
     connection_worker.abort();
     device_worker.abort();
     let _ = tokio::join!(device_worker, connection_worker);
