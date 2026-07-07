@@ -48,17 +48,15 @@ async fn main() -> Result<()> {
         }
     });
 
-    match tokio::signal::ctrl_c().await {
-        Ok(()) => println!("Shutting down..."),
-        Err(e) => eprintln!("Unable to listen for shutdown signal: {e}"),
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => println!("Shutting down..."),
+        _ = connection_worker => println!("Connection worker died, exiting..."),
+        _ = device_worker => println!("Device worker died, exiting..."),
     }
 
     for c in connection_map.iter() {
         c.close(VarInt::from_u32(0), &[0]);
     }
-    connection_worker.abort();
-    device_worker.abort();
-    let _ = tokio::join!(device_worker, connection_worker);
 
     endpoint.wait_idle().await;
     Ok(())

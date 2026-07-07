@@ -59,30 +59,45 @@ async fn main() -> Result<()> {
 }
 
 async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
-    let mut buf = vec![0u8; 1500];
+    let mut device_recv_task = {
+        let connection = connection.clone();
+        let device = device.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 1500];
+            loop {
+                let n = device.recv(&mut buf).await?;
+                connection.send_datagram(Bytes::copy_from_slice(&buf[..n]))?;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        })
+    };
 
-    loop {
-        tokio::select! {
-            recv_result = device.recv(&mut buf) => {
-                let n = match recv_result {
-                    Ok(n) => n,
-                    Err(e) => { eprintln!("Tun recv error: {e}"); return; }
-                };
-                if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&buf[..n])) {
-                    eprintln!("Send datagram error: {e}");
-                    return;
-                }
+    let mut connection_read_task = {
+        let connection = connection.clone();
+        let device = device.clone();
+        tokio::spawn(async move {
+            loop {
+                let data = connection.read_datagram().await?;
+                device.send(&data).await?;
             }
-            dgram_result = connection.read_datagram() => {
-                let data = match dgram_result {
-                    Ok(d) => d,
-                    Err(e) => { eprintln!("Read datagram error: {e}"); return; }
-                };
-                if let Err(e) = device.send(&data).await {
-                    eprintln!("Tun send error: {e}");
-                    return;
-                }
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        })
+    };
+
+    tokio::select! {
+        res = &mut device_recv_task => {
+            if let Err(e) = res {
+                eprintln!("Tun receive task died: {e}")
             }
-        }
+        },
+        res = &mut connection_read_task => {
+            if let Err(e) = res {
+                println!("Connection read task died: {e}")
+            }
+        },
     }
+    device_recv_task.abort();
+    connection_read_task.abort();
 }
