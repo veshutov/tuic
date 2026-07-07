@@ -2,8 +2,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use quinn::{Connection, Incoming, VarInt};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::str::FromStr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
@@ -23,14 +22,14 @@ async fn main() -> Result<()> {
     );
     let port = common::SERVER_PORT;
     println!("Server port: {port}");
-    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str("0.0.0.0")?), port);
+    let server_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let (endpoint, _server_cert) = make_server_endpoint(server_addr)?;
 
     let device_recv = device.clone();
     let connection_map_recv = connection_map.clone();
     let device_worker = tokio::spawn(async move {
         if let Err(e) = handle_device(device_recv, connection_map_recv).await {
-            println!("Error while listening device: {e}")
+            eprintln!("Error while listening device: {e}")
         }
     });
 
@@ -43,7 +42,7 @@ async fn main() -> Result<()> {
             let connection_map = connection_map_send.clone();
             tokio::spawn(async move {
                 if let Err(e) = handle_connection(device, connection_map, incoming_conn).await {
-                    println!("Connection error: {e}");
+                    eprintln!("Connection error: {e}");
                 }
             });
         }
@@ -51,7 +50,7 @@ async fn main() -> Result<()> {
 
     match tokio::signal::ctrl_c().await {
         Ok(()) => println!("Shutting down..."),
-        Err(err) => println!("Unable to listen for shutdown signal: {err}"),
+        Err(e) => eprintln!("Unable to listen for shutdown signal: {e}"),
     }
 
     for c in connection_map.iter() {
@@ -76,7 +75,7 @@ async fn handle_connection(
     println!("Connection accepted, addr={address}");
     loop {
         let read = connection.read_datagram().await?;
-        let _sent = device.clone().send(&read).await?;
+        let _sent = device.send(&read).await?;
     }
 }
 
@@ -89,7 +88,7 @@ async fn handle_device(
         let read = device.recv(&mut read_buf).await?;
         if let Some(connection) = connection_map.get("connection") {
             if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&read_buf[0..read])) {
-                println!(
+                eprintln!(
                     "Error while sending data to {}: {}",
                     connection.remote_address(),
                     e

@@ -1,9 +1,12 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
+use quinn::Connection;
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use tun_rs::DeviceBuilder;
 
 mod quic;
@@ -25,57 +28,61 @@ async fn main() -> Result<()> {
             .mtu(1150)
             .build_async()?,
     );
-    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_str(server_ip)?), common::SERVER_PORT);
+    let server_addr = SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::from_str(server_ip)?),
+        common::SERVER_PORT,
+    );
     let endpoint = make_client_endpoint("0.0.0.0:0".parse()?)?;
+    let backoff = Duration::from_millis(500);
 
     loop {
-        match endpoint.connect(server_addr, common::SERVER_NAME) {
-            Ok(connecting) => {
-                match connecting.await {
-                    Ok(connection) => {
-                        println!("Connected to server {}", connection.remote_address());
+        let connecting = match endpoint.connect(server_addr, common::SERVER_NAME) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Connect failed: {e}, retrying in {backoff:?}");
+                sleep(backoff).await;
+                continue;
+            }
+        };
+        let connection = match connecting.await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Handshake failed: {e}, retrying in {backoff:?}");
+                sleep(backoff).await;
+                continue;
+            }
+        };
+        println!("Connected to server {}", connection.remote_address());
+        run_tunnel(connection, device.clone()).await;
+        println!("Session ended, reconnecting...");
+    }
+}
 
-                        let connection_recv = connection.clone();
-                        let device_recv = device.clone();
+async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
+    let mut buf = vec![0u8; 1500];
 
-                        let recv_worker = tokio::spawn(async move {
-                            let connection = connection_recv.clone();
-                            let device = device_recv.clone();
-                            let mut read_buf: Vec<u8> = vec![0; 65536];
-                            loop {
-                                let read = device.recv(&mut read_buf).await.unwrap();
-                                connection
-                                    .send_datagram(Bytes::copy_from_slice(&read_buf[0..read]))
-                                    .unwrap();
-                            }
-                        });
-
-                        let connection_send = connection.clone();
-                        let device_send = device.clone();
-
-                        let send_worker = tokio::spawn(async move {
-                            loop {
-                                let read = connection_send.read_datagram().await.unwrap();
-                                let _sent = device_send.send(&read).await.unwrap();
-                            }
-                        });
-
-                        let _ = tokio::join!(recv_worker, send_worker);
-                    }
-                    Err(e) => {
-                        println!("Could not connect to endpoint: {e}");
-                        break;
-                    }
+    loop {
+        tokio::select! {
+            recv_result = device.recv(&mut buf) => {
+                let n = match recv_result {
+                    Ok(n) => n,
+                    Err(e) => { eprintln!("Tun recv error: {e}"); return; }
+                };
+                if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&buf[..n])) {
+                    eprintln!("Send datagram error: {e}");
+                    return;
                 }
             }
-            Err(e) => {
-                println!("Could not connect to endpoint: {e}");
-                break;
+            dgram_result = connection.read_datagram() => {
+                let data = match dgram_result {
+                    Ok(d) => d,
+                    Err(e) => { eprintln!("Read datagram error: {e}"); return; }
+                };
+                if let Err(e) = device.send(&data).await {
+                    eprintln!("Tun send error: {e}");
+                    return;
+                }
             }
         }
     }
-
-    println!("Shutting down");
-    endpoint.wait_idle().await;
-    Ok(())
 }
