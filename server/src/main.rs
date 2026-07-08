@@ -6,6 +6,7 @@ use quinn::{Connection, Incoming};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tun_rs::DeviceBuilder;
 
 mod ip;
@@ -93,24 +94,40 @@ async fn handle_connection(
 
 async fn listen_device(vpn_server: VpnServer) -> Result<()> {
     let mut buf = vec![0u8; 65536];
-    loop {
-        let nbytes = vpn_server.device.recv(&mut buf).await?;
-        let packet = &buf[..nbytes];
-        let Some(dst_ip) = destination_ipv4(packet) else {
-            continue;
-        };
-        let Some(connection) = vpn_server.connections.get(&dst_ip) else {
-            continue;
-        };
+    let mut consecutive_errors = 0;
 
-        if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(packet)) {
-            eprintln!(
-                "Error while sending data to {}: {}",
-                connection.remote_address(),
-                e
-            )
-        };
+    loop {
+        match vpn_server.device.recv(&mut buf).await {
+            Ok(nbytes) => {
+                consecutive_errors = 0;
+                route_packet(&vpn_server, &buf[..nbytes]);
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 5 {
+                    return Err(e).context("tun device unrecoverable after retries");
+                }
+                tokio::time::sleep(Duration::from_millis(100 * consecutive_errors)).await;
+            }
+        }
     }
+}
+
+fn route_packet(vpn_server: &VpnServer, packet: &[u8]) {
+    let Some(dst_ip) = destination_ipv4(packet) else {
+        return;
+    };
+    let Some(connection) = vpn_server.connections.get(&dst_ip) else {
+        return;
+    };
+
+    if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(packet)) {
+        eprintln!(
+            "Error while sending data to {}: {}",
+            connection.remote_address(),
+            e
+        )
+    };
 }
 
 fn destination_ipv4(packet: &[u8]) -> Option<Ipv4Addr> {
