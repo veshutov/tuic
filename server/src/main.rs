@@ -1,53 +1,27 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use common::await_shutdown;
-use dashmap::DashMap;
-use quinn::{Connection, Incoming, VarInt};
+use etherparse::{NetSlice, SlicedPacket};
+use quinn::{Connection, Incoming};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::str::FromStr;
 use std::sync::Arc;
-use tun_rs::{AsyncDevice, DeviceBuilder};
+use tun_rs::DeviceBuilder;
 
+mod ip;
 mod quic;
+mod server;
 
+use crate::ip::IpPool;
 use crate::quic::make_server_endpoint;
+use crate::server::VpnServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let connection_map: Arc<DashMap<String, Connection>> = Arc::new(DashMap::new());
-    let device = Arc::new(
-        DeviceBuilder::new()
-            .name("utun12")
-            .ipv4("10.0.0.2", 24, None)
-            .mtu(1150)
-            .build_async()?,
-    );
-    let port = common::SERVER_PORT;
-    println!("Server port: {port}");
-    let server_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-    let (endpoint, _server_cert) = make_server_endpoint(server_addr)?;
+    let vpn_server = build_vpn_server()?;
 
-    let device_recv = device.clone();
-    let connection_map_recv = connection_map.clone();
-    let device_worker = tokio::spawn(async move {
-        if let Err(e) = handle_device(device_recv, connection_map_recv).await {
-            eprintln!("Error while listening device: {e}")
-        }
-    });
-
-    let device_send = device.clone();
-    let connection_map_send = connection_map.clone();
-    let endpoint_send = endpoint.clone();
-    let connection_worker = tokio::spawn(async move {
-        while let Some(incoming_conn) = endpoint_send.accept().await {
-            let device = device_send.clone();
-            let connection_map = connection_map_send.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handle_connection(device, connection_map, incoming_conn).await {
-                    eprintln!("Connection error: {e}");
-                }
-            });
-        }
-    });
+    let device_worker = tokio::spawn(listen_device(vpn_server.clone()));
+    let connection_worker = tokio::spawn(accept_connections(vpn_server.clone()));
 
     tokio::select! {
         _ = await_shutdown() => {},
@@ -55,40 +29,103 @@ async fn main() -> Result<()> {
         _ = device_worker => println!("Device worker died, exiting..."),
     }
 
-    endpoint.close(VarInt::from_u32(0), &[0]);
+    vpn_server.shutdown().await;
     Ok(())
 }
 
-async fn handle_connection(
-    device: Arc<AsyncDevice>,
-    connection_map: Arc<DashMap<String, Connection>>,
-    inc_connection: Incoming,
-) -> Result<()> {
-    let connection = inc_connection.await?;
-    connection_map.insert("connection".to_string(), connection.clone());
-    let address = connection.remote_address();
-    println!("Connection accepted, addr={address}");
-    loop {
-        let read = connection.read_datagram().await?;
-        let _sent = device.send(&read).await?;
+fn build_vpn_server() -> Result<VpnServer> {
+    let subnet_addr = Ipv4Addr::from_str("10.0.0.0")?;
+    let subnet_prefix = 24;
+    let ip_pool = Arc::new(IpPool::new(subnet_addr, subnet_prefix));
+
+    let device_name = "utun12";
+    let device = Arc::new(
+        DeviceBuilder::new()
+            .name(device_name)
+            .ipv4(ip_pool.server_ip(), ip_pool.subnet_prefix, None)
+            .mtu(common::MTU)
+            .build_async()?,
+    );
+
+    let server_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, common::SERVER_PORT));
+    let endpoint = make_server_endpoint(server_addr)?;
+
+    Ok(VpnServer::new(device, endpoint, ip_pool))
+}
+
+async fn accept_connections(vpn_server: VpnServer) {
+    while let Some(incoming) = vpn_server.endpoint.accept().await {
+        let vpn_server = vpn_server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle_incoming(&vpn_server, incoming).await {
+                eprintln!("Connection error: {e}");
+            }
+        });
     }
 }
 
-async fn handle_device(
-    device: Arc<AsyncDevice>,
-    connection_map: Arc<DashMap<String, Connection>>,
+async fn handle_incoming(vpn_server: &VpnServer, incoming: Incoming) -> Result<()> {
+    let connection = incoming.await.context("accepting connection")?;
+    let remote_address = connection.remote_address();
+
+    let ip = vpn_server
+        .register(connection.clone())
+        .context("registering connection")?;
+    println!("Connection accepted, client addr={remote_address}, assigned ip={ip}");
+
+    let result = handle_connection(vpn_server, connection.clone(), ip).await;
+    vpn_server.unregister(connection);
+    result
+}
+
+async fn handle_connection(
+    vpn_server: &VpnServer,
+    connection: Connection,
+    ip: Ipv4Addr,
 ) -> Result<()> {
-    let mut read_buf: Vec<u8> = vec![0; 65536];
+    let ip_str = ip.to_string();
+    let subnet_prefix = vpn_server.ip_pool.subnet_prefix;
+    let message = format!("{}/{}", ip_str, subnet_prefix);
+    connection.send_datagram(Bytes::from(message))?;
     loop {
-        let read = device.recv(&mut read_buf).await?;
-        if let Some(connection) = connection_map.get("connection") {
-            if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&read_buf[0..read])) {
-                eprintln!(
-                    "Error while sending data to {}: {}",
-                    connection.remote_address(),
-                    e
-                )
-            };
+        let read = connection.read_datagram().await?;
+        let _sent = vpn_server.device.send(&read).await?;
+    }
+}
+
+async fn listen_device(vpn_server: VpnServer) -> Result<()> {
+    let mut buf = vec![0u8; 65536];
+    loop {
+        let nbytes = vpn_server.device.recv(&mut buf).await?;
+        let packet = &buf[..nbytes];
+        let Some(dst_ip) = destination_ipv4(packet) else {
+            continue;
+        };
+        let Some(connection) = vpn_server.connections.get(&dst_ip) else {
+            continue;
+        };
+
+        if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&buf[0..nbytes])) {
+            eprintln!(
+                "Error while sending data to {}: {}",
+                connection.remote_address(),
+                e
+            )
+        };
+    }
+}
+
+fn destination_ipv4(packet: &[u8]) -> Option<Ipv4Addr> {
+    let sliced = match SlicedPacket::from_ip(packet) {
+        Ok(sliced) => sliced,
+        Err(e) => {
+            eprintln!("Failed to parse packet: {e:?}");
+            return None;
         }
+    };
+
+    match sliced.net {
+        Some(NetSlice::Ipv4(v4)) => Some(v4.header().destination_addr()),
+        _ => None,
     }
 }

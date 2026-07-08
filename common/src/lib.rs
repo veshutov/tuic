@@ -4,6 +4,7 @@ use tokio::signal;
 
 pub const SERVER_NAME: &str = "localhost";
 pub const SERVER_PORT: u16 = 443;
+pub const MTU: u16 = 1150;
 
 pub fn build_transport_config() -> TransportConfig {
     let mut transport = TransportConfig::default();

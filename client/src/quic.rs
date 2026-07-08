@@ -5,7 +5,7 @@ use rustls::pki_types::CertificateDer;
 use std::{net::SocketAddr, sync::Arc};
 
 #[allow(unused)]
-pub(crate) fn make_client_endpoint(bind_addr: SocketAddr) -> Result<Endpoint, Error> {
+pub fn make_client_endpoint(bind_addr: SocketAddr) -> Result<Endpoint, Error> {
     let mut client_cfg = configure_client()?;
     client_cfg.transport_config(Arc::new(common::build_transport_config()));
     let mut endpoint = Endpoint::client(bind_addr)?;

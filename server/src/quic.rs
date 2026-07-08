@@ -6,20 +6,18 @@ use std::fs;
 use std::path::Path;
 use std::{net::SocketAddr, sync::Arc};
 
-pub(crate) fn make_server_endpoint(
-    bind_addr: SocketAddr,
-) -> Result<(Endpoint, CertificateDer<'static>), Error> {
-    let (server_config, server_cert) = configure_server()?;
+pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<Endpoint, Error> {
+    let server_config = configure_server()?;
     let endpoint = Endpoint::server(server_config, bind_addr)?;
-    Ok((endpoint, server_cert))
+    Ok(endpoint)
 }
 
-fn configure_server() -> Result<(ServerConfig, CertificateDer<'static>), Error> {
+fn configure_server() -> Result<ServerConfig, Error> {
     let (cert_der, key_der) = load_or_generate_cert();
     let mut server_config = ServerConfig::with_single_cert(vec![cert_der.clone()], key_der)?;
     server_config.transport_config(Arc::new(common::build_transport_config()));
 
-    Ok((server_config, cert_der))
+    Ok(server_config)
 }
 
 fn load_or_generate_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {

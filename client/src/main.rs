@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use common::await_shutdown;
 use quinn::{Connection, VarInt};
@@ -22,13 +22,6 @@ async fn main() -> Result<()> {
     }
 
     let server_ip = &args[1];
-    let device = Arc::new(
-        DeviceBuilder::new()
-            .name("utun11")
-            .ipv4("10.0.0.1", 24, None)
-            .mtu(1150)
-            .build_async()?,
-    );
     let server_addr = SocketAddr::new(
         IpAddr::V4(Ipv4Addr::from_str(server_ip)?),
         common::SERVER_PORT,
@@ -57,8 +50,11 @@ async fn main() -> Result<()> {
                     }
                 };
                 println!("Connected to server {}", connection.remote_address());
-                run_tunnel(connection, device.clone()).await;
-                println!("Session ended, reconnecting...");
+                match run_tunnel(connection).await {
+                    Ok(_) => println!("Session ended, reconnecting..."),
+                    Err(e) => eprintln!("Error running tunnel: {e}"),
+                };
+                sleep(backoff).await;
             }
         })
     };
@@ -71,13 +67,27 @@ async fn main() -> Result<()> {
     }
 
     endpoint.close(VarInt::from_u32(0), &[0]);
+    endpoint.wait_idle().await;
     Ok(())
 }
 
-async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
+async fn run_tunnel(connection: Connection) -> Result<()> {
+    let data = connection.read_datagram().await?;
+    let message: Vec<&str> = std::str::from_utf8(&data)?.split("/").collect();
+    let ip = *message.get(0).context("tun address")?;
+    let subnet_prefix: u8 = message.get(1).context("tun subnet")?.parse()?;
+    println!("Registring tun: {ip}/{subnet_prefix}");
+    let device = Arc::new(
+        DeviceBuilder::new()
+            .name("utun11")
+            .ipv4(ip, subnet_prefix, None)
+            .mtu(common::MTU)
+            .build_async()?,
+    );
+
     let mut device_recv_task = {
-        let connection = connection.clone();
         let device = device.clone();
+        let connection = connection.clone();
         tokio::spawn(async move {
             let mut buf = vec![0u8; 1500];
             loop {
@@ -116,4 +126,6 @@ async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
     }
     device_recv_task.abort();
     connection_read_task.abort();
+
+    Ok(())
 }
