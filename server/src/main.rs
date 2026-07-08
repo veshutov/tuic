@@ -83,9 +83,7 @@ async fn handle_connection(
     connection: Connection,
     ip: Ipv4Addr,
 ) -> Result<()> {
-    let ip_str = ip.to_string();
-    let subnet_prefix = vpn_server.ip_pool.subnet_prefix;
-    let message = format!("{}/{}", ip_str, subnet_prefix);
+    let message = format!("{ip}/{}", vpn_server.ip_pool.subnet_prefix);
     connection.send_datagram(Bytes::from(message))?;
     loop {
         let read = connection.read_datagram().await?;
@@ -105,7 +103,7 @@ async fn listen_device(vpn_server: VpnServer) -> Result<()> {
             continue;
         };
 
-        if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(&buf[0..nbytes])) {
+        if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(packet)) {
             eprintln!(
                 "Error while sending data to {}: {}",
                 connection.remote_address(),
