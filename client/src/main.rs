@@ -94,7 +94,7 @@ async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
         },
         res = &mut connection_read_task => {
             if let Err(e) = res {
-                println!("Connection read task died: {e}")
+                eprintln!("Connection read task died: {e}")
             }
         },
     }

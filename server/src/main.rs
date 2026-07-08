@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bytes::Bytes;
+use common::await_shutdown;
 use dashmap::DashMap;
 use quinn::{Connection, Incoming, VarInt};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -49,16 +50,12 @@ async fn main() -> Result<()> {
     });
 
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => println!("Shutting down..."),
+        _ = await_shutdown() => {},
         _ = connection_worker => println!("Connection worker died, exiting..."),
         _ = device_worker => println!("Device worker died, exiting..."),
     }
 
-    for c in connection_map.iter() {
-        c.close(VarInt::from_u32(0), &[0]);
-    }
-
-    endpoint.wait_idle().await;
+    endpoint.close(VarInt::from_u32(0), &[0]);
     Ok(())
 }
 

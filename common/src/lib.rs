@@ -1,6 +1,6 @@
-use std::sync::Arc;
-
 use quinn::{TransportConfig, congestion};
+use std::sync::Arc;
+use tokio::signal;
 
 pub const SERVER_NAME: &str = "localhost";
 pub const SERVER_PORT: u16 = 443;
@@ -16,4 +16,32 @@ pub fn build_transport_config() -> TransportConfig {
     transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
 
     transport
+}
+
+pub async fn await_shutdown() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            println!("Received SIGINT, initiating shutdown...");
+        }
+        _ = terminate => {
+            println!("Received SIGTERM, initiating shutdown...");
+        }
+    }
 }
