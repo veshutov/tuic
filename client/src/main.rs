@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use quinn::Connection;
+use common::await_shutdown;
+use quinn::{Connection, VarInt};
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
@@ -35,27 +36,42 @@ async fn main() -> Result<()> {
     let endpoint = make_client_endpoint("0.0.0.0:0".parse()?)?;
     let backoff = Duration::from_millis(500);
 
-    loop {
-        let connecting = match endpoint.connect(server_addr, common::SERVER_NAME) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Connect failed: {e}, retrying in {backoff:?}");
-                sleep(backoff).await;
-                continue;
+    let mut main_task = {
+        let endpoint = endpoint.clone();
+        tokio::spawn(async move {
+            loop {
+                let connecting = match endpoint.connect(server_addr, common::SERVER_NAME) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Connect failed: {e}, retrying in {backoff:?}");
+                        sleep(backoff).await;
+                        continue;
+                    }
+                };
+                let connection = match connecting.await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Handshake failed: {e}, retrying in {backoff:?}");
+                        sleep(backoff).await;
+                        continue;
+                    }
+                };
+                println!("Connected to server {}", connection.remote_address());
+                run_tunnel(connection, device.clone()).await;
+                println!("Session ended, reconnecting...");
             }
-        };
-        let connection = match connecting.await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Handshake failed: {e}, retrying in {backoff:?}");
-                sleep(backoff).await;
-                continue;
-            }
-        };
-        println!("Connected to server {}", connection.remote_address());
-        run_tunnel(connection, device.clone()).await;
-        println!("Session ended, reconnecting...");
+        })
+    };
+
+    tokio::select! {
+        _ = await_shutdown() => {
+            main_task.abort();
+        },
+        _ = &mut main_task => println!("Main task died, exiting..."),
     }
+
+    endpoint.close(VarInt::from_u32(0), &[0]);
+    Ok(())
 }
 
 async fn run_tunnel(connection: Connection, device: Arc<tun_rs::AsyncDevice>) {
