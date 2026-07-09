@@ -2,6 +2,7 @@
 name = "utun10"
 subnet = "10.0.0.0/24"
 mtu = 1150
+setup_nat = true
 
 [quic]
 server_name = "localhost"

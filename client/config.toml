@@ -1,6 +1,7 @@
 [tun]
 name = "utun11"
 mtu = 1150
+setup_routes = true
 
 [quic]
 endpoint_address = "0.0.0.0:0"

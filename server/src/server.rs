@@ -23,6 +23,7 @@ pub struct Inner {
     endpoint: Endpoint,
     ip_pool: IpPool,
     connections: DashMap<Ipv4Addr, Connection>,
+    setup_nat: bool,
 }
 
 impl std::ops::Deref for VpnServer {
@@ -54,6 +55,7 @@ impl VpnServer {
             endpoint,
             ip_pool,
             connections: DashMap::new(),
+            setup_nat: tun_config.setup_nat,
         };
         Ok(VpnServer(Arc::new(inner)))
     }
@@ -63,7 +65,12 @@ impl VpnServer {
             "{}/{}",
             self.ip_pool.subnet_base, self.ip_pool.subnet_prefix
         );
-        let _guard = apply_vpn_nat(&subnet)?;
+
+        let _guard = if self.setup_nat {
+            Some(apply_vpn_nat(&subnet)?)
+        } else {
+            None
+        };
 
         let device_worker = {
             let server = self.clone();

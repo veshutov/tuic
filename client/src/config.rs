@@ -13,6 +13,7 @@ pub struct VpnConfig {
 pub struct TunConfig {
     pub name: String,
     pub mtu: u16,
+    pub setup_routes: bool,
 }
 
 #[derive(Debug, Deserialize)]

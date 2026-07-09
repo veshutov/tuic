@@ -90,7 +90,12 @@ async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
             .mtu(mtu)
             .build_async()?,
     );
-    let _guard = setup_vpn_routes(server_address, device_name)?;
+
+    let _guard = if config.tun.setup_routes {
+        Some(setup_vpn_routes(server_address, device_name)?)
+    } else {
+        None
+    };
 
     let mut device_recv_task = {
         let device = device.clone();

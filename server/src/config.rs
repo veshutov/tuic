@@ -14,6 +14,7 @@ pub struct TunConfig {
     pub name: String,
     pub subnet: String,
     pub mtu: u16,
+    pub setup_nat: bool,
 }
 
 #[derive(Debug, Deserialize)]

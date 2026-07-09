@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use default_net::get_default_interface;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use tracing::error;
+use tracing::{error, info};
 
 pub struct NatGuard;
 
@@ -15,6 +15,7 @@ impl Drop for NatGuard {
 }
 
 pub fn apply_vpn_nat(vpn_net: &str) -> Result<NatGuard> {
+    info!("Applying NAT for {vpn_net}");
     let main_nic = main_nic()?;
     let ruleset = format!(
         r#"

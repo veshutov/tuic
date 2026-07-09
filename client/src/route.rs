@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use default_net::get_default_interface;
 use std::process::Command;
-use tracing::error;
+use tracing::{error, info};
 
 pub struct RoutesGuard {
     tun: String,
@@ -17,6 +17,7 @@ impl Drop for RoutesGuard {
 }
 
 pub fn setup_vpn_routes(server_ip: &str, tun: &str) -> Result<RoutesGuard> {
+    info!("Setting up routes for {server_ip}");
     let default_gw = main_gw_address()?;
 
     run_route(&["add", "-host", server_ip, &default_gw])?;
