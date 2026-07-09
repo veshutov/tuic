@@ -11,9 +11,11 @@ use tun_rs::DeviceBuilder;
 
 mod config;
 mod quic;
+mod route;
 
-use crate::config::{TunConfig, VpnConfig};
+use crate::config::VpnConfig;
 use crate::quic::make_client_endpoint;
+use crate::route::setup_vpn_routes;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,7 +49,7 @@ async fn main() -> Result<()> {
                     }
                 };
                 info!("Connected to server {}", connection.remote_address());
-                match run_tunnel(connection, &config.tun).await {
+                match run_tunnel(connection, &config).await {
                     Ok(_) => error!("Session ended, reconnecting..."),
                     Err(e) => error!("Error running tunnel: {e}"),
                 };
@@ -68,7 +70,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_tunnel(connection: Connection, config: &TunConfig) -> Result<()> {
+async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
     let data = connection.read_datagram().await?;
 
     let (addr, prefix) = std::str::from_utf8(&data)?
@@ -78,13 +80,17 @@ async fn run_tunnel(connection: Connection, config: &TunConfig) -> Result<()> {
     let prefix: u8 = prefix.parse()?;
 
     info!("Registring tun {addr}/{prefix}");
+    let device_name = &config.tun.name;
+    let server_address = &config.quic.server_address.ip().to_string();
+    let mtu = config.tun.mtu;
     let device = Arc::new(
         DeviceBuilder::new()
-            .name(config.name.clone())
+            .name(device_name)
             .ipv4(addr, prefix, None)
-            .mtu(config.mtu)
+            .mtu(mtu)
             .build_async()?,
     );
+    let _guard = setup_vpn_routes(server_address, device_name)?;
 
     let mut device_recv_task = {
         let device = device.clone();

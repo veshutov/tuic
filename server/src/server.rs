@@ -3,6 +3,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use etherparse::{NetSlice, SlicedPacket};
 use quinn::{Connection, Endpoint, Incoming, ReadDatagram, VarInt};
+use tokio::time::sleep;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,7 +35,9 @@ impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
         let tun_config = config.tun;
 
-        let (addr, prefix) = tun_config.subnet.split_once('/')
+        let (addr, prefix) = tun_config
+            .subnet
+            .split_once('/')
             .context("subnet must be in CIDR form, e.g. 10.0.0.0/24")?;
         let addr: Ipv4Addr = addr.parse()?;
         let prefix: u8 = prefix.parse()?;
@@ -132,12 +135,22 @@ impl VpnServer {
     }
 
     async fn handle_session(&self, session: Session) -> Result<()> {
+        let mut consecutive_errors = 0;
         loop {
             let read = session.read().await?;
             if source_match(session.ip, &read) {
-                let _sent = self.device.send(&read).await?;
-            } else {
-                error!("Invalid packet source")
+                match self.device.send(&read).await {
+                    Ok(_sent) => {
+                        consecutive_errors = 0;
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors > 5 {
+                            return Err(e.into());
+                        }
+                        sleep(Duration::from_millis(100 * consecutive_errors)).await;
+                    }
+                }
             }
         }
     }
@@ -187,7 +200,7 @@ async fn listen_device(server: VpnServer) -> Result<()> {
                 if consecutive_errors >= 5 {
                     return Err(e).context("tun device unrecoverable after retries");
                 }
-                tokio::time::sleep(Duration::from_millis(100 * consecutive_errors)).await;
+                sleep(Duration::from_millis(100 * consecutive_errors)).await;
             }
         }
     }
@@ -204,8 +217,7 @@ fn source_match(session_ip: Ipv4Addr, packet: &[u8]) -> bool {
 fn src_dst_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
     let sliced = match SlicedPacket::from_ip(packet) {
         Ok(sliced) => sliced,
-        Err(e) => {
-            error!("Failed to parse packet: {e:?}");
+        Err(_) => {
             return None;
         }
     };
