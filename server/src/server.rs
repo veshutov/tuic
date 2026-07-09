@@ -32,19 +32,17 @@ impl std::ops::Deref for VpnServer {
 impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
         let tun_config = config.tun;
+
         let subnet: Vec<&str> = tun_config.subnet.split("/").collect();
         let addr: Ipv4Addr = subnet.get(0).context("subnet address")?.parse()?;
         let prefix: u8 = subnet.get(1).context("subnet prefix")?.parse()?;
         let ip_pool = IpPool::new(addr, prefix);
-
         let device = DeviceBuilder::new()
             .name(&tun_config.name)
             .ipv4(ip_pool.server_ip(), ip_pool.subnet_prefix, None)
             .mtu(tun_config.mtu)
             .build_async()?;
-
         let endpoint = make_server_endpoint(&config.quic)?;
-
         let inner = Inner {
             device,
             endpoint,

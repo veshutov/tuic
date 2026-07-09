@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::Result;
 use quinn::congestion::BbrConfig;
 use quinn::{Endpoint, MtuDiscoveryConfig, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -9,14 +9,14 @@ use std::sync::Arc;
 
 use crate::config::QuicConfig;
 
-pub fn make_server_endpoint(config: &QuicConfig) -> Result<Endpoint, Error> {
+pub fn make_server_endpoint(config: &QuicConfig) -> Result<Endpoint> {
     let server_config = configure_server(config)?;
     let endpoint = Endpoint::server(server_config, config.endpoint_address)?;
     Ok(endpoint)
 }
 
-fn configure_server(config: &QuicConfig) -> Result<ServerConfig, Error> {
-    let (cert_der, key_der) = load_or_generate_cert(config);
+fn configure_server(config: &QuicConfig) -> Result<ServerConfig> {
+    let (cert_der, key_der) = load_or_generate_cert(config)?;
     let mut server_config = ServerConfig::with_single_cert(vec![cert_der.clone()], key_der)?;
     server_config.transport_config(Arc::new(build_transport_config(config)));
 
@@ -25,33 +25,34 @@ fn configure_server(config: &QuicConfig) -> Result<ServerConfig, Error> {
 
 fn load_or_generate_cert(
     quic_config: &QuicConfig,
-) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
+) -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
     let cert_path = &quic_config.server_cert;
     let key_path = &quic_config.server_key;
 
     if Path::new(cert_path).exists() && Path::new(key_path).exists() {
         println!("Loading existing cert + key");
-        let cert_bytes = fs::read(cert_path).unwrap();
-        let key_bytes = fs::read(key_path).unwrap();
+        let cert_bytes = fs::read(cert_path)?;
+        let key_bytes = fs::read(key_path)?;
 
         let cert = CertificateDer::from(cert_bytes);
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
 
-        (cert, key)
+        Ok((cert, key))
     } else {
         println!("Generating new cert + key");
-        let cert = rcgen::generate_simple_self_signed(vec![common::SERVER_NAME.into()]).unwrap();
+        let subject_alt_names = vec![quic_config.server_name.clone().into()];
+        let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
 
         let cert_der = cert.cert.der().to_vec();
         let key_der = cert.signing_key.serialize_der();
 
-        fs::write(cert_path, &cert_der).unwrap();
-        fs::write(key_path, &key_der).unwrap();
+        fs::write(cert_path, &cert_der)?;
+        fs::write(key_path, &key_der)?;
 
         let cert = CertificateDer::from(cert_der);
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
 
-        (cert, key)
+        Ok((cert, key))
     }
 }
 

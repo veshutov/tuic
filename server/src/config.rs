@@ -18,6 +18,7 @@ pub struct TunConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct QuicConfig {
+    pub server_name: String,
     pub endpoint_address: SocketAddr,
     pub receive_buffer_size_kb: usize,
     pub send_buffer_size_kb: usize,

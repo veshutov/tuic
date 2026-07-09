@@ -4,6 +4,7 @@ subnet = "10.0.0.0/24"
 mtu = 1150
 
 [quic]
+server_name = "localhost"
 endpoint_address = "0.0.0.0:443"
 receive_buffer_size_kb = 2048
 send_buffer_size_kb = 2048
