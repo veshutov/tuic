@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use quinn::{Connection, VarInt};
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -69,14 +70,18 @@ async fn main() -> Result<()> {
 
 async fn run_tunnel(connection: Connection, config: &TunConfig) -> Result<()> {
     let data = connection.read_datagram().await?;
-    let message: Vec<&str> = std::str::from_utf8(&data)?.split("/").collect();
-    let ip = *message.get(0).context("tun address")?;
-    let subnet_prefix: u8 = message.get(1).context("tun subnet")?.parse()?;
-    info!("Registring tun {ip}/{subnet_prefix}");
+
+    let (addr, prefix) = std::str::from_utf8(&data)?
+        .split_once('/')
+        .context("invalid subnet from server")?;
+    let addr: Ipv4Addr = addr.parse()?;
+    let prefix: u8 = prefix.parse()?;
+
+    info!("Registring tun {addr}/{prefix}");
     let device = Arc::new(
         DeviceBuilder::new()
             .name(config.name.clone())
-            .ipv4(ip, subnet_prefix, None)
+            .ipv4(addr, prefix, None)
             .mtu(config.mtu)
             .build_async()?,
     );

@@ -34,9 +34,10 @@ impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
         let tun_config = config.tun;
 
-        let subnet: Vec<&str> = tun_config.subnet.split("/").collect();
-        let addr: Ipv4Addr = subnet.get(0).context("subnet address")?.parse()?;
-        let prefix: u8 = subnet.get(1).context("subnet prefix")?.parse()?;
+        let (addr, prefix) = tun_config.subnet.split_once('/')
+            .context("subnet must be in CIDR form, e.g. 10.0.0.0/24")?;
+        let addr: Ipv4Addr = addr.parse()?;
+        let prefix: u8 = prefix.parse()?;
         let ip_pool = IpPool::new(addr, prefix);
         let device = DeviceBuilder::new()
             .name(&tun_config.name)
