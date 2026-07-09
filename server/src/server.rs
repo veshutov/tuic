@@ -13,31 +13,38 @@ use crate::ip::IpPool;
 use crate::quic::make_server_endpoint;
 
 #[derive(Clone)]
-pub struct VpnServer {
-    device: Arc<AsyncDevice>,
+pub struct VpnServer(Arc<Inner>);
+
+pub struct Inner {
+    device: AsyncDevice,
     endpoint: Endpoint,
-    ip_pool: Arc<IpPool>,
-    connections: Arc<DashMap<Ipv4Addr, Connection>>,
+    ip_pool: IpPool,
+    connections: DashMap<Ipv4Addr, Connection>,
+}
+
+impl std::ops::Deref for VpnServer {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.0
+    }
 }
 
 impl VpnServer {
     pub fn new(config: VpnServerConfig) -> Result<Self> {
-        let ip_pool = Arc::new(IpPool::new(config.subnet_addr, config.subnet_prefix));
-        let device = Arc::new(
-            DeviceBuilder::new()
-                .name(&config.device_name)
-                .ipv4(ip_pool.server_ip(), ip_pool.subnet_prefix, None)
-                .mtu(config.mtu)
-                .build_async()?,
-        );
+        let ip_pool = IpPool::new(config.subnet_addr, config.subnet_prefix);
+        let device = DeviceBuilder::new()
+            .name(&config.device_name)
+            .ipv4(ip_pool.server_ip(), ip_pool.subnet_prefix, None)
+            .mtu(config.mtu)
+            .build_async()?;
         let endpoint = make_server_endpoint(config.listen_addr)?;
-
-        Ok(VpnServer {
+        let inner = Inner {
             device,
             endpoint,
             ip_pool,
-            connections: Arc::new(DashMap::new()),
-        })
+            connections: DashMap::new(),
+        };
+        Ok(VpnServer(Arc::new(inner)))
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -51,8 +58,8 @@ impl VpnServer {
         };
 
         tokio::select! {
-            _ = device_worker => {println!("device_w")}
-            _ = connection_worker => {println!("conn_w")}
+            _ = device_worker => {}
+            _ = connection_worker => {}
         }
 
         Ok(())
@@ -90,7 +97,7 @@ impl VpnServer {
     }
 
     fn route_to_client(&self, packet: &[u8]) {
-        let Some(dst_ip) = destination_ipv4(packet) else {
+        let Some((_, dst_ip)) = src_dst_ipv4(packet) else {
             return;
         };
         let Some(connection) = self.connections.get(&dst_ip) else {
@@ -120,7 +127,11 @@ impl VpnServer {
     async fn handle_session(&self, session: Session) -> Result<()> {
         loop {
             let read = session.read().await?;
-            let _sent = self.device.send(&read).await?;
+            if source_match(session.ip, &read) {
+                let _sent = self.device.send(&read).await?;
+            } else {
+                eprintln!("Invalid packet source")
+            }
         }
     }
 }
@@ -175,7 +186,15 @@ async fn listen_device(server: VpnServer) -> Result<()> {
     }
 }
 
-fn destination_ipv4(packet: &[u8]) -> Option<Ipv4Addr> {
+fn source_match(session_ip: Ipv4Addr, packet: &[u8]) -> bool {
+    if let Some((src_ip, _)) = src_dst_ipv4(packet) {
+        src_ip == session_ip
+    } else {
+        false
+    }
+}
+
+fn src_dst_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
     let sliced = match SlicedPacket::from_ip(packet) {
         Ok(sliced) => sliced,
         Err(e) => {
@@ -185,7 +204,9 @@ fn destination_ipv4(packet: &[u8]) -> Option<Ipv4Addr> {
     };
 
     match sliced.net {
-        Some(NetSlice::Ipv4(v4)) => Some(v4.header().destination_addr()),
+        Some(NetSlice::Ipv4(v4)) => {
+            Some((v4.header().source_addr(), v4.header().destination_addr()))
+        }
         _ => None,
     }
 }
