@@ -18,7 +18,6 @@ pub struct VpnServer {
     endpoint: Endpoint,
     ip_pool: Arc<IpPool>,
     connections: Arc<DashMap<Ipv4Addr, Connection>>,
-    assigned_ips: Arc<DashMap<usize, Ipv4Addr>>,
 }
 
 impl VpnServer {
@@ -38,7 +37,6 @@ impl VpnServer {
             endpoint,
             ip_pool,
             connections: Arc::new(DashMap::new()),
-            assigned_ips: Arc::new(DashMap::new()),
         })
     }
 
@@ -66,14 +64,13 @@ impl VpnServer {
     }
 
     fn register(&self, connection: Connection) -> Result<Session> {
-        let id = connection.stable_id();
         let ip = self
             .ip_pool
             .allocate()
             .ok_or_else(|| anyhow!("Ip pool exhausted"))?;
         self.connections.insert(ip, connection.clone());
-        self.assigned_ips.insert(id, ip);
         let session = Session {
+            ip,
             connection: connection.clone(),
             server: self.clone(),
         };
@@ -87,12 +84,9 @@ impl VpnServer {
         Ok(())
     }
 
-    fn unregister(&self, connection: &Connection) {
-        let id = connection.stable_id();
-        if let Some((_, ip)) = self.assigned_ips.remove(&id) {
-            self.ip_pool.release(ip);
-            self.connections.remove(&ip);
-        }
+    fn unregister(&self, ip: Ipv4Addr) {
+        self.connections.remove(&ip);
+        self.ip_pool.release(ip);
     }
 
     fn route_to_client(&self, packet: &[u8]) {
@@ -132,6 +126,7 @@ impl VpnServer {
 }
 
 struct Session {
+    ip: Ipv4Addr,
     connection: Connection,
     server: VpnServer,
 }
@@ -144,7 +139,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.server.unregister(&self.connection);
+        self.server.unregister(self.ip);
     }
 }
 
