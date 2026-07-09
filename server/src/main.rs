@@ -1,5 +1,6 @@
 use anyhow::Result;
-use common::await_shutdown;
+use tracing::{error, info};
+use tuic_common::await_shutdown;
 
 mod config;
 mod ip;
@@ -11,13 +12,15 @@ use crate::server::VpnServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
     let config = VpnConfig::new("config")?;
-    println!("{:#?}", config);
+    info!("{:#?}", config);
     let vpn_server = VpnServer::new(config)?;
 
     tokio::select! {
         _ = await_shutdown() => {},
-        _ = vpn_server.run() => println!("Server died, exiting..."),
+        _ = vpn_server.run() => error!("Server died, exiting..."),
     }
 
     vpn_server.shutdown().await;

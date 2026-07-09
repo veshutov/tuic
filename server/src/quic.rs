@@ -2,6 +2,7 @@ use anyhow::Result;
 use quinn::congestion::BbrConfig;
 use quinn::{Endpoint, MtuDiscoveryConfig, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use tracing::info;
 
 use std::fs;
 use std::path::Path;
@@ -30,7 +31,7 @@ fn load_or_generate_cert(
     let key_path = &quic_config.server_key;
 
     if Path::new(cert_path).exists() && Path::new(key_path).exists() {
-        println!("Loading existing cert + key");
+        info!("Loading existing cert + key");
         let cert_bytes = fs::read(cert_path)?;
         let key_bytes = fs::read(key_path)?;
 
@@ -39,7 +40,7 @@ fn load_or_generate_cert(
 
         Ok((cert, key))
     } else {
-        println!("Generating new cert + key");
+        info!("Generating new cert + key");
         let subject_alt_names = vec![quic_config.server_name.clone().into()];
         let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
 

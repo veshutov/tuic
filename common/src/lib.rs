@@ -1,4 +1,5 @@
 use tokio::signal;
+use tracing::info;
 
 pub async fn await_shutdown() {
     let ctrl_c = async {
@@ -20,10 +21,10 @@ pub async fn await_shutdown() {
 
     tokio::select! {
         _ = ctrl_c => {
-            println!("Received SIGINT, initiating shutdown...");
+            info!("Received SIGINT, initiating shutdown...");
         }
         _ = terminate => {
-            println!("Received SIGTERM, initiating shutdown...");
+            info!("Received SIGTERM, initiating shutdown...");
         }
     }
 }

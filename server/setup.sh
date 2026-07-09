@@ -16,4 +16,4 @@ table ip vpn_nat {
 }
 EOF
 
-sudo ./tun-server
+sudo ./tuic-server

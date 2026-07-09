@@ -8,7 +8,7 @@ fi
 
 VPN_SERVER_IP="$1"
 TUN_IF="utun11"
-VPN_BINARY="../target/release/tun-client"
+VPN_BINARY="../target/release/tuic-client"
 ORIG_GW=$(route -n get default | awk '/gateway:/{print $2}')
 VPN_PID=""
 

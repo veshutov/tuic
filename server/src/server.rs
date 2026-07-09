@@ -6,6 +6,7 @@ use quinn::{Connection, Endpoint, Incoming, ReadDatagram, VarInt};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::{error, info};
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
@@ -110,7 +111,7 @@ impl VpnServer {
         };
 
         if let Err(e) = connection.send_datagram(Bytes::copy_from_slice(packet)) {
-            eprintln!(
+            error!(
                 "Error while sending data to {}: {}",
                 connection.remote_address(),
                 e
@@ -125,7 +126,7 @@ impl VpnServer {
         let session = self
             .register(connection.clone())
             .context("registering connection")?;
-        println!("Connection accepted, addr={remote_address}");
+        info!("Connection accepted, addr={remote_address}");
         self.handle_session(session).await
     }
 
@@ -135,7 +136,7 @@ impl VpnServer {
             if source_match(session.ip, &read) {
                 let _sent = self.device.send(&read).await?;
             } else {
-                eprintln!("Invalid packet source")
+                error!("Invalid packet source")
             }
         }
     }
@@ -164,7 +165,7 @@ async fn accept_connections(server: VpnServer) {
         let vpn_server = server.clone();
         tokio::spawn(async move {
             if let Err(e) = vpn_server.handle_incoming(incoming).await {
-                eprintln!("Connection error: {e}");
+                error!("Connection error: {e}");
             }
         });
     }
@@ -203,7 +204,7 @@ fn src_dst_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
     let sliced = match SlicedPacket::from_ip(packet) {
         Ok(sliced) => sliced,
         Err(e) => {
-            eprintln!("Failed to parse packet: {e:?}");
+            error!("Failed to parse packet: {e:?}");
             return None;
         }
     };
