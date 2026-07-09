@@ -1,39 +1,33 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use common::await_shutdown;
 use quinn::{Connection, VarInt};
-use std::env;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tun_rs::DeviceBuilder;
 
+mod config;
 mod quic;
 
+use crate::config::{TunConfig, VpnConfig};
 use crate::quic::make_client_endpoint;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        return Err(anyhow!("Invalid arguments, provide server ip"));
-    }
+    let config = VpnConfig::new("config")?;
+    println!("{:#?}", config);
 
-    let server_ip = &args[1];
-    let server_addr = SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::from_str(server_ip)?),
-        common::SERVER_PORT,
-    );
-    let endpoint = make_client_endpoint("0.0.0.0:0".parse()?)?;
-    let backoff = Duration::from_millis(500);
+    let server_address = config.quic.server_address;
+    let server_name = config.quic.server_name.clone();
+    let endpoint = make_client_endpoint(&config.quic)?;
+    let backoff = Duration::from_millis(config.quic.reconnect_interval_ms);
 
     let mut main_task = {
         let endpoint = endpoint.clone();
         tokio::spawn(async move {
             loop {
-                let connecting = match endpoint.connect(server_addr, common::SERVER_NAME) {
+                let connecting = match endpoint.connect(server_address, &server_name) {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("Connect failed: {e}, retrying in {backoff:?}");
@@ -50,7 +44,7 @@ async fn main() -> Result<()> {
                     }
                 };
                 println!("Connected to server {}", connection.remote_address());
-                match run_tunnel(connection).await {
+                match run_tunnel(connection, &config.tun).await {
                     Ok(_) => println!("Session ended, reconnecting..."),
                     Err(e) => eprintln!("Error running tunnel: {e}"),
                 };
@@ -71,7 +65,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_tunnel(connection: Connection) -> Result<()> {
+async fn run_tunnel(connection: Connection, config: &TunConfig) -> Result<()> {
     let data = connection.read_datagram().await?;
     let message: Vec<&str> = std::str::from_utf8(&data)?.split("/").collect();
     let ip = *message.get(0).context("tun address")?;
@@ -79,9 +73,9 @@ async fn run_tunnel(connection: Connection) -> Result<()> {
     println!("Registring tun: {ip}/{subnet_prefix}");
     let device = Arc::new(
         DeviceBuilder::new()
-            .name("utun11")
+            .name(config.name.clone())
             .ipv4(ip, subnet_prefix, None)
-            .mtu(common::MTU)
+            .mtu(config.mtu)
             .build_async()?,
     );
 
