@@ -9,6 +9,7 @@ tuic-common = { path = "../common" }
 tokio.workspace = true
 
 tun-rs.workspace = true
+default-net.workspace = true
 quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true

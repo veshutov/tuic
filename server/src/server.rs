@@ -3,16 +3,17 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use etherparse::{NetSlice, SlicedPacket};
 use quinn::{Connection, Endpoint, Incoming, ReadDatagram, VarInt};
-use tokio::time::sleep;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::sleep;
 use tracing::{error, info};
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
 use crate::ip::IpPool;
 use crate::quic::make_server_endpoint;
+use crate::route::apply_vpn_nat;
 
 #[derive(Clone)]
 pub struct VpnServer(Arc<Inner>);
@@ -58,6 +59,12 @@ impl VpnServer {
     }
 
     pub async fn run(&self) -> Result<()> {
+        let subnet = format!(
+            "{}/{}",
+            self.ip_pool.subnet_base, self.ip_pool.subnet_prefix
+        );
+        let _guard = apply_vpn_nat(&subnet)?;
+
         let device_worker = {
             let server = self.clone();
             tokio::spawn(async move { listen_device(server).await })

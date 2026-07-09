@@ -5,6 +5,7 @@ use tuic_common::await_shutdown;
 mod config;
 mod ip;
 mod quic;
+mod route;
 mod server;
 
 use crate::config::VpnConfig;

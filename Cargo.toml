@@ -6,6 +6,7 @@ members = ["client", "server", "common"]
 tokio = { version = "1.52.3", features = ["full"] }
 
 tun-rs = { version = "2.8.6", features = ["async", "async_framed"] }
+default-net = "0.22.0"
 etherparse = "0.20.2"
 quinn = { version = "0.11.11", features = ["rustls-aws-lc-rs", "rustls-ring"] }
 rustls = "0.23.41"
