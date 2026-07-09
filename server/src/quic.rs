@@ -1,28 +1,33 @@
 use anyhow::Error;
-use quinn::{Endpoint, ServerConfig};
+use quinn::congestion::BbrConfig;
+use quinn::{Endpoint, MtuDiscoveryConfig, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use std::fs;
 use std::path::Path;
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
-pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<Endpoint, Error> {
-    let server_config = configure_server()?;
-    let endpoint = Endpoint::server(server_config, bind_addr)?;
+use crate::config::QuicConfig;
+
+pub fn make_server_endpoint(config: &QuicConfig) -> Result<Endpoint, Error> {
+    let server_config = configure_server(config)?;
+    let endpoint = Endpoint::server(server_config, config.endpoint_address)?;
     Ok(endpoint)
 }
 
-fn configure_server() -> Result<ServerConfig, Error> {
-    let (cert_der, key_der) = load_or_generate_cert();
+fn configure_server(config: &QuicConfig) -> Result<ServerConfig, Error> {
+    let (cert_der, key_der) = load_or_generate_cert(config);
     let mut server_config = ServerConfig::with_single_cert(vec![cert_der.clone()], key_der)?;
-    server_config.transport_config(Arc::new(common::build_transport_config()));
+    server_config.transport_config(Arc::new(build_transport_config(config)));
 
     Ok(server_config)
 }
 
-fn load_or_generate_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
-    let cert_path = "server_cert.der";
-    let key_path = "server_key.der";
+fn load_or_generate_cert(
+    quic_config: &QuicConfig,
+) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
+    let cert_path = &quic_config.server_cert;
+    let key_path = &quic_config.server_key;
 
     if Path::new(cert_path).exists() && Path::new(key_path).exists() {
         println!("Loading existing cert + key");
@@ -48,4 +53,17 @@ fn load_or_generate_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) 
 
         (cert, key)
     }
+}
+
+pub fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
+    let mut transport = TransportConfig::default();
+
+    transport.mtu_discovery_config(Some(MtuDiscoveryConfig::default()));
+    transport.datagram_receive_buffer_size(Some(quic_config.receive_buffer_size_kb * 1024));
+    transport.datagram_send_buffer_size(quic_config.send_buffer_size_kb * 1024);
+    transport.max_concurrent_uni_streams(0u32.into());
+    transport.max_concurrent_bidi_streams(0u32.into());
+    transport.congestion_controller_factory(Arc::new(BbrConfig::default()));
+
+    transport
 }

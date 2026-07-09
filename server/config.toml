@@ -1,0 +1,11 @@
+[tun]
+name = "utun10"
+subnet = "10.0.0.0/24"
+mtu = 1150
+
+[quic]
+endpoint_address = "0.0.0.0:443"
+receive_buffer_size_kb = 2048
+send_buffer_size_kb = 2048
+server_cert = "server_cert.der"
+server_key = "server_key.der"

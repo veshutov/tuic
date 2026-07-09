@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         _ = &mut main_task => println!("Main task died, exiting..."),
     }
 
-    endpoint.close(VarInt::from_u32(0), &[0]);
+    endpoint.close(VarInt::from_u32(0), &[]);
     endpoint.wait_idle().await;
     Ok(())
 }

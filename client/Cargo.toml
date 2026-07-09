@@ -12,6 +12,8 @@ tun-rs.workspace = true
 quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
-
-anyhow.workspace = true
 bytes.workspace = true
+
+serde.workspace = true
+config.workspace = true
+anyhow.workspace = true
