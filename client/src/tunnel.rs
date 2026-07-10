@@ -1,22 +1,24 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use quinn::Connection;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tracing::info;
+use tuic_common::HandshakeMessage;
 use tun_rs::DeviceBuilder;
 
 use crate::config::VpnConfig;
 use crate::route::setup_vpn_routes;
 
-pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
-    let data = connection.read_datagram().await?;
+const MAX_HANDSHAKE_DATA: usize = 100;
 
-    let (addr, prefix) = std::str::from_utf8(&data)?
-        .split_once('/')
-        .context("invalid subnet from server")?;
-    let addr: Ipv4Addr = addr.parse().context("invalid subnet address")?;
-    let prefix: u8 = prefix.parse().context("invalid subnet prefix")?;
+pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
+    let mut recv = connection.accept_uni().await?;
+    let handshake_bytes = recv.read_to_end(MAX_HANDSHAKE_DATA).await?;
+
+    let handshake = HandshakeMessage::from(handshake_bytes);
+    let addr: Ipv4Addr = handshake.addr;
+    let prefix: u8 = handshake.prefix;
 
     info!("registring tun {addr}/{prefix}");
     let device_name = &config.tun.name;

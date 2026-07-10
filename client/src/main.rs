@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
 
     let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
     info!("loading config from path: {config_path}");
-    let config = VpnConfig::new(&config_path)?;
+    let config = VpnConfig::from_file(&config_path)?;
     info!("{:#?}", config);
 
     let server_address = config.quic.server_address;

@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
-use tuic_common::CLOSE_CODE_NORMAL;
+use tuic_common::{CLOSE_CODE_NORMAL, HandshakeMessage};
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
@@ -106,25 +106,34 @@ impl VpnServer {
         self.endpoint.close(CLOSE_CODE_NORMAL, &[]);
         self.endpoint.wait_idle().await;
         self.task_tracker.close();
-        if let Err(_) = tokio::time::timeout(SHUTDOWN_TIMEOUT, self.task_tracker.wait()).await {
+        if tokio::time::timeout(SHUTDOWN_TIMEOUT, self.task_tracker.wait())
+            .await
+            .is_err()
+        {
             error!("timed out waiting for server tasks to finish")
         };
     }
 
-    fn register(&self, connection: &Connection) -> Result<Session> {
+    async fn register(&self, connection: &Connection) -> Result<Session> {
         let ip = self
             .ip_pool
             .allocate()
             .ok_or_else(|| anyhow!("ip pool exhausted"))?;
         self.connections.insert(ip, connection.clone());
         let session = Session::new(ip, connection.clone(), self.clone());
-        self.send_welcome(connection, ip)?;
+        self.send_welcome(connection, ip).await?;
         Ok(session)
     }
 
-    fn send_welcome(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
-        let message = format!("{ip}/{}", self.ip_pool.subnet_prefix);
-        connection.send_datagram(Bytes::from(message))?;
+    async fn send_welcome(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
+        let message: Vec<u8> = HandshakeMessage {
+            addr: ip,
+            prefix: self.ip_pool.subnet_prefix,
+        }
+        .into();
+        let mut stream = connection.open_uni().await?;
+        stream.write_all(&message).await?;
+        stream.finish()?;
         Ok(())
     }
 
@@ -156,6 +165,7 @@ impl VpnServer {
 
         let session = self
             .register(&connection)
+            .await
             .context("registering connection")?;
         info!("connection accepted, addr={remote_address}");
         self.handle_session(session).await
@@ -189,7 +199,7 @@ impl VpnServer {
 async fn accept_connections(server: VpnServer) {
     while let Some(incoming) = server.endpoint.accept().await {
         let vpn_server = server.clone();
-        tokio::spawn(async move {
+        server.task_tracker.spawn(async move {
             if let Err(e) = vpn_server.handle_incoming(incoming).await {
                 error!("connection error: {e}");
             }
@@ -216,7 +226,7 @@ async fn listen_device(server: VpnServer) -> Result<()> {
                     }
                     Err(e) => {
                         consecutive_errors += 1;
-                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
                             return Err(e).context("tun device unrecoverable after retries");
                         }
                         sleep(Duration::from_millis(

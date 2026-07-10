@@ -28,7 +28,7 @@ pub struct QuicConfig {
 }
 
 impl VpnConfig {
-    pub fn new(config_file: &str) -> Result<Self, ConfigError> {
+    pub fn from_file(config_file: &str) -> Result<Self, ConfigError> {
         let config = Config::builder()
             .add_source(File::with_name(config_file))
             .build()?;

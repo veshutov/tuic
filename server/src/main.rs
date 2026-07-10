@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
 
     let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
     info!("Loading config from path: {config_path}");
-    let config = VpnConfig::new(&config_path)?;
+    let config = VpnConfig::from_file(&config_path)?;
     info!("{:#?}", config);
     let vpn_server = VpnServer::new(config)?;
 
@@ -31,7 +31,6 @@ async fn main() -> Result<()> {
         _ = await_shutdown() => Ok(()),
         r = run_handle => r.unwrap_or_else(|e| Err(e.into())),
     };
-
     vpn_server.shutdown().await;
     result
 }
