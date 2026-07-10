@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use dashmap::DashMap;
-use quinn::{Connection, Endpoint, Incoming, ReadDatagram, VarInt};
+use quinn::{Connection, ConnectionError, Endpoint, Incoming, VarInt};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +31,11 @@ impl std::ops::Deref for VpnServer {
         &self.0
     }
 }
+
+const MAX_CONSECUTIVE_ERRORS: u64 = 5;
+const ERROR_BACKOFF_BASE_MS: u64 = 100;
+const TUN_READ_BUF_SIZE: usize = 65536;
+const CLOSE_CODE_NORMAL: VarInt = VarInt::from_u32(0);
 
 impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
@@ -93,7 +98,7 @@ impl VpnServer {
     }
 
     pub async fn shutdown(&self) {
-        self.endpoint.close(VarInt::from_u32(0), &[]);
+        self.endpoint.close(CLOSE_CODE_NORMAL, &[]);
         self.endpoint.wait_idle().await;
     }
 
@@ -162,10 +167,13 @@ impl VpnServer {
                     }
                     Err(e) => {
                         consecutive_errors += 1;
-                        if consecutive_errors > 5 {
+                        if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
                             return Err(e.into());
                         }
-                        sleep(Duration::from_millis(100 * consecutive_errors)).await;
+                        sleep(Duration::from_millis(
+                            ERROR_BACKOFF_BASE_MS * consecutive_errors,
+                        ))
+                        .await;
                     }
                 }
             }
@@ -180,15 +188,15 @@ struct Session {
 }
 
 impl Session {
-    pub fn read(&self) -> ReadDatagram<'_> {
-        self.connection.read_datagram()
+    pub async fn read(&self) -> Result<Bytes, ConnectionError> {
+        self.connection.read_datagram().await
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self.server.unregister(self.ip);
-        self.connection.close(VarInt::from_u32(0), &[]);
+        self.connection.close(CLOSE_CODE_NORMAL, &[]);
     }
 }
 
@@ -205,7 +213,7 @@ async fn accept_connections(server: VpnServer) {
 }
 
 async fn listen_device(server: VpnServer) -> Result<()> {
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; TUN_READ_BUF_SIZE];
     let mut consecutive_errors = 0;
 
     loop {
@@ -216,10 +224,13 @@ async fn listen_device(server: VpnServer) -> Result<()> {
             }
             Err(e) => {
                 consecutive_errors += 1;
-                if consecutive_errors >= 5 {
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                     return Err(e).context("tun device unrecoverable after retries");
                 }
-                sleep(Duration::from_millis(100 * consecutive_errors)).await;
+                sleep(Duration::from_millis(
+                    ERROR_BACKOFF_BASE_MS * consecutive_errors,
+                ))
+                .await;
             }
         }
     }
