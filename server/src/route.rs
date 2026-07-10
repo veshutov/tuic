@@ -1,8 +1,34 @@
 use anyhow::{Result, anyhow};
 use default_net::get_default_interface;
+use etherparse::{NetSlice, SlicedPacket};
 use std::io::Write;
+use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 use tracing::{error, info};
+
+pub fn source_match(session_ip: Ipv4Addr, packet: &[u8]) -> bool {
+    if let Some((src_ip, _)) = src_dst_ipv4(packet) {
+        src_ip == session_ip
+    } else {
+        false
+    }
+}
+
+pub fn src_dst_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    let sliced = match SlicedPacket::from_ip(packet) {
+        Ok(sliced) => sliced,
+        Err(_) => {
+            return None;
+        }
+    };
+
+    match sliced.net {
+        Some(NetSlice::Ipv4(v4)) => {
+            Some((v4.header().source_addr(), v4.header().destination_addr()))
+        }
+        _ => None,
+    }
+}
 
 pub struct NatGuard;
 
@@ -58,7 +84,7 @@ fn teardown_vpn_nat() -> Result<()> {
 
     if !status.success() {
         // Not fatal on shutdown — table may already be gone.
-        eprintln!("warning: `nft delete table ip vpn_nat` exited with {status}");
+        error!("warning: `nft delete table ip vpn_nat` exited with {status}");
     }
     Ok(())
 }

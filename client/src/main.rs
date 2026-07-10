@@ -21,10 +21,9 @@ use crate::route::setup_vpn_routes;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let config_path = if args.len() > 1 { &args[1] } else { "tuic" };
+    let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
     info!("Loading config from path: {config_path}");
-    let config = VpnConfig::new(config_path)?;
+    let config = VpnConfig::new(&config_path)?;
     info!("{:#?}", config);
 
     let server_address = config.quic.server_address;
@@ -80,8 +79,8 @@ async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
     let (addr, prefix) = std::str::from_utf8(&data)?
         .split_once('/')
         .context("invalid subnet from server")?;
-    let addr: Ipv4Addr = addr.parse()?;
-    let prefix: u8 = prefix.parse()?;
+    let addr: Ipv4Addr = addr.parse().context("invalid subnet address")?;
+    let prefix: u8 = prefix.parse().context("invalid subnet prefix")?;
 
     info!("Registring tun {addr}/{prefix}");
     let device_name = &config.tun.name;

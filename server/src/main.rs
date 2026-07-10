@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::{error, info};
+use tracing::info;
 use tuic_common::await_shutdown;
 
 mod config;
@@ -15,18 +15,17 @@ use crate::server::VpnServer;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let config_path = if args.len() > 1 { &args[1] } else { "tuic" };
+    let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
     info!("Loading config from path: {config_path}");
-    let config = VpnConfig::new(config_path)?;
+    let config = VpnConfig::new(&config_path)?;
     info!("{:#?}", config);
     let vpn_server = VpnServer::new(config)?;
 
-    tokio::select! {
-        _ = await_shutdown() => {},
-        _ = vpn_server.run() => error!("Server died, exiting..."),
-    }
+    let result = tokio::select! {
+        _ = await_shutdown() => Ok(()),
+        server_run_result = vpn_server.run() => server_run_result
+    };
 
     vpn_server.shutdown().await;
-    Ok(())
+    result
 }

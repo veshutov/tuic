@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use dashmap::DashMap;
-use etherparse::{NetSlice, SlicedPacket};
 use quinn::{Connection, Endpoint, Incoming, ReadDatagram, VarInt};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -13,12 +12,12 @@ use tun_rs::{AsyncDevice, DeviceBuilder};
 use crate::config::VpnConfig;
 use crate::ip::IpPool;
 use crate::quic::make_server_endpoint;
-use crate::route::apply_vpn_nat;
+use crate::route::{apply_vpn_nat, source_match, src_dst_ipv4};
 
 #[derive(Clone)]
-pub struct VpnServer(Arc<Inner>);
+pub struct VpnServer(Arc<VpnServerState>);
 
-pub struct Inner {
+pub struct VpnServerState {
     device: AsyncDevice,
     endpoint: Endpoint,
     ip_pool: IpPool,
@@ -27,8 +26,8 @@ pub struct Inner {
 }
 
 impl std::ops::Deref for VpnServer {
-    type Target = Inner;
-    fn deref(&self) -> &Inner {
+    type Target = VpnServerState;
+    fn deref(&self) -> &VpnServerState {
         &self.0
     }
 }
@@ -41,8 +40,8 @@ impl VpnServer {
             .subnet
             .split_once('/')
             .context("subnet must be in CIDR form, e.g. 10.0.0.0/24")?;
-        let addr: Ipv4Addr = addr.parse()?;
-        let prefix: u8 = prefix.parse()?;
+        let addr: Ipv4Addr = addr.parse().context("invalid subnet address")?;
+        let prefix: u8 = prefix.parse().context("invalid subnet prefix")?;
         let ip_pool = IpPool::new(addr, prefix);
         let device = DeviceBuilder::new()
             .name(&tun_config.name)
@@ -50,7 +49,7 @@ impl VpnServer {
             .mtu(tun_config.mtu)
             .build_async()?;
         let endpoint = make_server_endpoint(&config.quic)?;
-        let inner = Inner {
+        let inner = VpnServerState {
             device,
             endpoint,
             ip_pool,
@@ -66,27 +65,31 @@ impl VpnServer {
             self.ip_pool.subnet_base, self.ip_pool.subnet_prefix
         );
 
-        let _guard = if self.setup_nat {
+        let _nat_guard = if self.setup_nat {
             Some(apply_vpn_nat(&subnet)?)
         } else {
             None
         };
 
-        let device_worker = {
+        let mut device_worker = {
             let server = self.clone();
             tokio::spawn(async move { listen_device(server).await })
         };
-        let connection_worker = {
+        let mut connection_worker = {
             let server = self.clone();
             tokio::spawn(async move { accept_connections(server).await })
         };
 
         tokio::select! {
-            _ = device_worker => {}
-            _ = connection_worker => {}
+            join_result = &mut device_worker => {
+                connection_worker.abort();
+                join_result.context("Device worker failed")?
+            }
+            join_result = &mut connection_worker => {
+                device_worker.abort();
+                join_result.context("Connection worker failed")
+            }
         }
-
-        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -94,7 +97,7 @@ impl VpnServer {
         self.endpoint.wait_idle().await;
     }
 
-    fn register(&self, connection: Connection) -> Result<Session> {
+    fn register(&self, connection: &Connection) -> Result<Session> {
         let ip = self
             .ip_pool
             .allocate()
@@ -109,7 +112,7 @@ impl VpnServer {
         Ok(session)
     }
 
-    fn send_welcome(&self, connection: Connection, ip: Ipv4Addr) -> Result<()> {
+    fn send_welcome(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
         let message = format!("{ip}/{}", self.ip_pool.subnet_prefix);
         connection.send_datagram(Bytes::from(message))?;
         Ok(())
@@ -142,7 +145,7 @@ impl VpnServer {
         let remote_address = connection.remote_address();
 
         let session = self
-            .register(connection.clone())
+            .register(&connection)
             .context("registering connection")?;
         info!("Connection accepted, addr={remote_address}");
         self.handle_session(session).await
@@ -185,6 +188,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.server.unregister(self.ip);
+        self.connection.close(VarInt::from_u32(0), &[]);
     }
 }
 
@@ -197,6 +201,7 @@ async fn accept_connections(server: VpnServer) {
             }
         });
     }
+    info!("Endpoint accept connections loop exited");
 }
 
 async fn listen_device(server: VpnServer) -> Result<()> {
@@ -217,29 +222,5 @@ async fn listen_device(server: VpnServer) -> Result<()> {
                 sleep(Duration::from_millis(100 * consecutive_errors)).await;
             }
         }
-    }
-}
-
-fn source_match(session_ip: Ipv4Addr, packet: &[u8]) -> bool {
-    if let Some((src_ip, _)) = src_dst_ipv4(packet) {
-        src_ip == session_ip
-    } else {
-        false
-    }
-}
-
-fn src_dst_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr)> {
-    let sliced = match SlicedPacket::from_ip(packet) {
-        Ok(sliced) => sliced,
-        Err(_) => {
-            return None;
-        }
-    };
-
-    match sliced.net {
-        Some(NetSlice::Ipv4(v4)) => {
-            Some((v4.header().source_addr(), v4.header().destination_addr()))
-        }
-        _ => None,
     }
 }
