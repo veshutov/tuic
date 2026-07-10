@@ -54,6 +54,9 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
 
     let mut connection_read_task = {
         let connection = connection.clone();
+        if let Some(max_datagram_size) = connection.max_datagram_size() {
+            info!("connection max_datagram_size = {max_datagram_size}");
+        }
         let device = device.clone();
         tokio::spawn(async move {
             loop {
