@@ -31,7 +31,7 @@ fn load_or_generate_cert(
     let key_path = &quic_config.server_key;
 
     if Path::new(cert_path).exists() && Path::new(key_path).exists() {
-        info!("Loading existing cert + key");
+        info!("loading existing cert + key");
         let cert_bytes = fs::read(cert_path)?;
         let key_bytes = fs::read(key_path)?;
 
@@ -40,7 +40,7 @@ fn load_or_generate_cert(
 
         Ok((cert, key))
     } else {
-        info!("Generating new cert + key");
+        info!("generating new cert + key");
         let subject_alt_names = vec![quic_config.server_name.clone().into()];
         let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
 

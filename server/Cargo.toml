@@ -7,6 +7,7 @@ edition = "2024"
 tuic-common = { path = "../common" }
 
 tokio.workspace = true
+tokio-util.workspace = true
 
 tun-rs.workspace = true
 default-net.workspace = true

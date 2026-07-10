@@ -11,13 +11,13 @@ pub struct RoutesGuard {
 impl Drop for RoutesGuard {
     fn drop(&mut self) {
         if let Err(e) = cleanup_vpn_routes(&self.server_ip, &self.tun) {
-            error!("Failed to cleanup routes: {e}");
+            error!("failed to cleanup routes: {e}");
         }
     }
 }
 
 pub fn setup_vpn_routes(server_ip: &str, tun: &str) -> Result<RoutesGuard> {
-    info!("Setting up routes for {server_ip}");
+    info!("setting up routes for {server_ip}");
     let default_gw = main_gw_address()?;
 
     run_route(&["add", "-host", server_ip, &default_gw])?;
@@ -31,6 +31,7 @@ pub fn setup_vpn_routes(server_ip: &str, tun: &str) -> Result<RoutesGuard> {
 }
 
 fn cleanup_vpn_routes(server_ip: &str, tun: &str) -> Result<()> {
+    info!("cleaning up routes");
     run_route(&["delete", "-host", server_ip])?;
     run_route(&["delete", "-net", "0.0.0.0/1", "-interface", tun])?;
     run_route(&["delete", "-net", "128.0.0.0/1", "-interface", tun])?;

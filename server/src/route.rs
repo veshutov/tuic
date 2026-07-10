@@ -35,13 +35,13 @@ pub struct NatGuard;
 impl Drop for NatGuard {
     fn drop(&mut self) {
         if let Err(e) = teardown_vpn_nat() {
-            error!("Failed to teardown VPN NAT: {e}");
+            error!("failed to teardown NAT: {e}");
         }
     }
 }
 
 pub fn apply_vpn_nat(vpn_net: &str) -> Result<NatGuard> {
-    info!("Applying NAT for {vpn_net}");
+    info!("applying NAT for {vpn_net}");
     let main_nic = main_nic()?;
     let ruleset = format!(
         r#"
@@ -78,6 +78,7 @@ table ip vpn_nat {{
 }
 
 fn teardown_vpn_nat() -> Result<()> {
+    info!("removing NAT");
     let status = Command::new("sudo")
         .args(["nft", "delete", "table", "ip", "vpn_nat"])
         .status()?;

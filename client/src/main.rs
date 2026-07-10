@@ -1,28 +1,25 @@
-use anyhow::{Context, Result};
-use bytes::Bytes;
-use quinn::{Connection, VarInt};
-use std::net::Ipv4Addr;
-use std::sync::Arc;
+use anyhow::Result;
+use quinn::VarInt;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
-use tuic_common::await_shutdown;
-use tun_rs::DeviceBuilder;
+use tuic_common::{CLOSE_CODE_NORMAL, await_shutdown};
 
 mod config;
 mod quic;
 mod route;
+mod tunnel;
 
 use crate::config::VpnConfig;
 use crate::quic::make_client_endpoint;
-use crate::route::setup_vpn_routes;
+use crate::tunnel::run_tunnel;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
-    info!("Loading config from path: {config_path}");
+    info!("loading config from path: {config_path}");
     let config = VpnConfig::new(&config_path)?;
     info!("{:#?}", config);
 
@@ -38,7 +35,7 @@ async fn main() -> Result<()> {
                 let connecting = match endpoint.connect(server_address, &server_name) {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("Connect failed: {e}, retrying in {backoff:?}");
+                        error!("connect failed: {e}, retrying in {backoff:?}");
                         sleep(backoff).await;
                         continue;
                     }
@@ -46,16 +43,17 @@ async fn main() -> Result<()> {
                 let connection = match connecting.await {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("Handshake failed: {e}, retrying in {backoff:?}");
+                        error!("handshake failed: {e}, retrying in {backoff:?}");
                         sleep(backoff).await;
                         continue;
                     }
                 };
-                info!("Connected to server {}", connection.remote_address());
-                match run_tunnel(connection, &config).await {
-                    Ok(_) => error!("Session ended, reconnecting..."),
-                    Err(e) => error!("Error running tunnel: {e}"),
+                info!("connected to server {}", connection.remote_address());
+                match run_tunnel(connection.clone(), &config).await {
+                    Ok(_) => error!("session ended, reconnecting..."),
+                    Err(e) => error!("error running tunnel: {e}"),
                 };
+                connection.close(CLOSE_CODE_NORMAL, &[]);
                 sleep(backoff).await;
             }
         })
@@ -65,82 +63,10 @@ async fn main() -> Result<()> {
         _ = await_shutdown() => {
             main_task.abort();
         },
-        _ = &mut main_task => error!("Main task died, exiting..."),
+        _ = &mut main_task => error!("main task died, exiting..."),
     }
 
     endpoint.close(VarInt::from_u32(0), &[]);
     endpoint.wait_idle().await;
-    Ok(())
-}
-
-async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
-    let data = connection.read_datagram().await?;
-
-    let (addr, prefix) = std::str::from_utf8(&data)?
-        .split_once('/')
-        .context("invalid subnet from server")?;
-    let addr: Ipv4Addr = addr.parse().context("invalid subnet address")?;
-    let prefix: u8 = prefix.parse().context("invalid subnet prefix")?;
-
-    info!("Registring tun {addr}/{prefix}");
-    let device_name = &config.tun.name;
-    let server_address = &config.quic.server_address.ip().to_string();
-    let mtu = config.tun.mtu;
-    let device = Arc::new(
-        DeviceBuilder::new()
-            .name(device_name)
-            .ipv4(addr, prefix, None)
-            .mtu(mtu)
-            .build_async()?,
-    );
-
-    let _guard = if config.tun.setup_routes {
-        Some(setup_vpn_routes(server_address, device_name)?)
-    } else {
-        None
-    };
-
-    let mut device_recv_task = {
-        let device = device.clone();
-        let connection = connection.clone();
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; 1500];
-            loop {
-                let n = device.recv(&mut buf).await?;
-                connection.send_datagram(Bytes::copy_from_slice(&buf[..n]))?;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        })
-    };
-
-    let mut connection_read_task = {
-        let connection = connection.clone();
-        let device = device.clone();
-        tokio::spawn(async move {
-            loop {
-                let data = connection.read_datagram().await?;
-                device.send(&data).await?;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        })
-    };
-
-    tokio::select! {
-        res = &mut device_recv_task => {
-            if let Err(e) = res {
-                error!("Tun receive task died: {e}")
-            }
-        },
-        res = &mut connection_read_task => {
-            if let Err(e) = res {
-                error!("Connection read task died: {e}")
-            }
-        },
-    }
-    device_recv_task.abort();
-    connection_read_task.abort();
-
     Ok(())
 }

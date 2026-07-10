@@ -6,6 +6,8 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 use tuic_common::CLOSE_CODE_NORMAL;
 use tun_rs::{AsyncDevice, DeviceBuilder};
@@ -25,6 +27,8 @@ pub struct VpnServerState {
     ip_pool: IpPool,
     connections: DashMap<Ipv4Addr, Connection>,
     setup_nat: bool,
+    cancellation_token: CancellationToken,
+    task_tracker: TaskTracker,
 }
 
 impl std::ops::Deref for VpnServer {
@@ -37,6 +41,7 @@ impl std::ops::Deref for VpnServer {
 const MAX_CONSECUTIVE_ERRORS: u64 = 5;
 const ERROR_BACKOFF_BASE_MS: u64 = 100;
 const TUN_READ_BUF_SIZE: usize = 65536;
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
@@ -61,6 +66,8 @@ impl VpnServer {
             ip_pool,
             connections: DashMap::new(),
             setup_nat: tun_config.setup_nat,
+            cancellation_token: CancellationToken::new(),
+            task_tracker: TaskTracker::new(),
         };
         Ok(VpnServer(Arc::new(inner)))
     }
@@ -77,37 +84,38 @@ impl VpnServer {
             None
         };
 
-        let mut device_worker = {
+        let device_worker = {
             let server = self.clone();
-            tokio::spawn(async move { listen_device(server).await })
+            self.task_tracker
+                .spawn(async move { listen_device(server).await })
         };
-        let mut connection_worker = {
+        let connection_worker = {
             let server = self.clone();
-            tokio::spawn(async move { accept_connections(server).await })
+            self.task_tracker
+                .spawn(async move { accept_connections(server).await })
         };
 
         tokio::select! {
-            join_result = &mut device_worker => {
-                connection_worker.abort();
-                join_result.context("Device worker failed")?
-            }
-            join_result = &mut connection_worker => {
-                device_worker.abort();
-                join_result.context("Connection worker failed")
-            }
+            r = device_worker => r.unwrap_or_else(|e| Err(e.into())),
+            r = connection_worker => r.map_err(|e| anyhow::anyhow!(e)),
         }
     }
 
     pub async fn shutdown(&self) {
+        self.cancellation_token.cancel();
         self.endpoint.close(CLOSE_CODE_NORMAL, &[]);
         self.endpoint.wait_idle().await;
+        self.task_tracker.close();
+        if let Err(_) = tokio::time::timeout(SHUTDOWN_TIMEOUT, self.task_tracker.wait()).await {
+            error!("timed out waiting for server tasks to finish")
+        };
     }
 
     fn register(&self, connection: &Connection) -> Result<Session> {
         let ip = self
             .ip_pool
             .allocate()
-            .ok_or_else(|| anyhow!("Ip pool exhausted"))?;
+            .ok_or_else(|| anyhow!("ip pool exhausted"))?;
         self.connections.insert(ip, connection.clone());
         let session = Session::new(ip, connection.clone(), self.clone());
         self.send_welcome(connection, ip)?;
@@ -149,7 +157,7 @@ impl VpnServer {
         let session = self
             .register(&connection)
             .context("registering connection")?;
-        info!("Connection accepted, addr={remote_address}");
+        info!("connection accepted, addr={remote_address}");
         self.handle_session(session).await
     }
 
@@ -183,11 +191,11 @@ async fn accept_connections(server: VpnServer) {
         let vpn_server = server.clone();
         tokio::spawn(async move {
             if let Err(e) = vpn_server.handle_incoming(incoming).await {
-                error!("Connection error: {e}");
+                error!("connection error: {e}");
             }
         });
     }
-    info!("Endpoint accept connections loop exited");
+    info!("accept_connections: shutting down");
 }
 
 async fn listen_device(server: VpnServer) -> Result<()> {
@@ -195,20 +203,28 @@ async fn listen_device(server: VpnServer) -> Result<()> {
     let mut consecutive_errors = 0;
 
     loop {
-        match server.device.recv(&mut buf).await {
-            Ok(nbytes) => {
-                consecutive_errors = 0;
-                server.route_to_client(&buf[..nbytes]);
+        tokio::select! {
+            _ = server.cancellation_token.cancelled() => {
+                info!("listen_device: shutting down");
+                return Ok(());
             }
-            Err(e) => {
-                consecutive_errors += 1;
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                    return Err(e).context("tun device unrecoverable after retries");
+            result = server.device.recv(&mut buf) => {
+                match result {
+                    Ok(nbytes) => {
+                        consecutive_errors = 0;
+                        server.route_to_client(&buf[..nbytes]);
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                            return Err(e).context("tun device unrecoverable after retries");
+                        }
+                        sleep(Duration::from_millis(
+                            ERROR_BACKOFF_BASE_MS * consecutive_errors,
+                        ))
+                        .await;
+                    }
                 }
-                sleep(Duration::from_millis(
-                    ERROR_BACKOFF_BASE_MS * consecutive_errors,
-                ))
-                .await;
             }
         }
     }

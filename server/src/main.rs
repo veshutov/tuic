@@ -22,9 +22,14 @@ async fn main() -> Result<()> {
     info!("{:#?}", config);
     let vpn_server = VpnServer::new(config)?;
 
+    let run_handle = {
+        let server = vpn_server.clone();
+        tokio::spawn(async move { server.run().await })
+    };
+
     let result = tokio::select! {
         _ = await_shutdown() => Ok(()),
-        server_run_result = vpn_server.run() => server_run_result
+        r = run_handle => r.unwrap_or_else(|e| Err(e.into())),
     };
 
     vpn_server.shutdown().await;

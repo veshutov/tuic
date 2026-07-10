@@ -25,10 +25,10 @@ pub async fn await_shutdown() {
 
     tokio::select! {
         _ = ctrl_c => {
-            info!("Received SIGINT, initiating shutdown...");
+            info!("received SIGINT, initiating shutdown...");
         }
         _ = terminate => {
-            info!("Received SIGTERM, initiating shutdown...");
+            info!("received SIGTERM, initiating shutdown...");
         }
     }
 }
