@@ -28,8 +28,8 @@ pub fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
     transport.mtu_discovery_config(Some(MtuDiscoveryConfig::default()));
     transport.datagram_receive_buffer_size(Some(quic_config.receive_buffer_size_kb * 1024));
     transport.datagram_send_buffer_size(quic_config.send_buffer_size_kb * 1024);
-    transport.max_concurrent_uni_streams(10u32.into());
-    transport.max_concurrent_bidi_streams(0u32.into());
+    transport.max_concurrent_uni_streams(0u32.into());
+    transport.max_concurrent_bidi_streams(10u32.into());
     transport.congestion_controller_factory(Arc::new(BbrConfig::default()));
 
     transport

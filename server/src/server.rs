@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
-use tuic_common::{CLOSE_CODE_NORMAL, HandshakeMessage};
+use tuic_common::{CLOSE_CODE_NORMAL, ClientHello, MAX_HANDSHAKE_DATA, ServerHello};
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
@@ -22,11 +22,11 @@ use crate::session::Session;
 pub struct VpnServer(Arc<VpnServerState>);
 
 pub struct VpnServerState {
+    config: VpnConfig,
     device: AsyncDevice,
     endpoint: Endpoint,
     ip_pool: IpPool,
     connections: DashMap<Ipv4Addr, Connection>,
-    setup_nat: bool,
     cancellation_token: CancellationToken,
     task_tracker: TaskTracker,
 }
@@ -45,7 +45,7 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
-        let tun_config = config.tun;
+        let tun_config = &config.tun;
 
         let (addr, prefix) = tun_config
             .subnet
@@ -61,11 +61,11 @@ impl VpnServer {
             .build_async()?;
         let endpoint = make_server_endpoint(&config.quic)?;
         let inner = VpnServerState {
+            config,
             device,
             endpoint,
             ip_pool,
             connections: DashMap::new(),
-            setup_nat: tun_config.setup_nat,
             cancellation_token: CancellationToken::new(),
             task_tracker: TaskTracker::new(),
         };
@@ -78,7 +78,7 @@ impl VpnServer {
             self.ip_pool.subnet_base, self.ip_pool.subnet_prefix
         );
 
-        let _nat_guard = if self.setup_nat {
+        let _nat_guard = if self.config.tun.setup_nat {
             Some(apply_vpn_nat(&subnet)?)
         } else {
             None
@@ -121,19 +121,30 @@ impl VpnServer {
             .ok_or_else(|| anyhow!("ip pool exhausted"))?;
         self.connections.insert(ip, connection.clone());
         let session = Session::new(ip, connection.clone(), self.clone());
-        self.send_welcome(connection, ip).await?;
+        self.handshake(connection, ip).await?;
         Ok(session)
     }
 
-    async fn send_welcome(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
-        let message: Vec<u8> = HandshakeMessage {
+    async fn handshake(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
+        let (mut send, mut recv) = connection.accept_bi().await?;
+        let client_hello_bytes = recv.read_to_end(MAX_HANDSHAKE_DATA).await?;
+        let client_hello = ClientHello::from(client_hello_bytes);
+        info!("received client hello, user={}", client_hello.user);
+
+        if !self.config.auth(&client_hello.user, client_hello.secret) {
+            return Err(anyhow!("authentication failed"));
+        }
+
+        info!("authentication succeeded, user={}", client_hello.user);
+        let message: Vec<u8> = ServerHello {
             addr: ip,
             prefix: self.ip_pool.subnet_prefix,
         }
         .into();
-        let mut stream = connection.open_uni().await?;
-        stream.write_all(&message).await?;
-        stream.finish()?;
+
+        send.write_all(&message).await?;
+        send.finish()?;
+
         Ok(())
     }
 

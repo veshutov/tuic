@@ -5,14 +5,40 @@ use tracing::info;
 
 use quinn::VarInt;
 
+pub const MAX_HANDSHAKE_DATA: usize = 100;
 pub const CLOSE_CODE_NORMAL: VarInt = VarInt::from_u32(0);
 
-pub struct HandshakeMessage {
+pub struct ClientHello {
+    pub user: String,
+    pub secret: String,
+}
+
+impl Into<Vec<u8>> for ClientHello {
+    fn into(self) -> Vec<u8> {
+        let mut result = Vec::new();
+        let message = format!("{}:{}", self.user, self.secret);
+        result.extend(message.as_bytes());
+        result
+    }
+}
+
+impl From<Vec<u8>> for ClientHello {
+    fn from(value: Vec<u8>) -> Self {
+        let message = String::from_utf8(value).unwrap_or_default();
+        let mut parts = message.split(':');
+        Self {
+            user: parts.next().unwrap_or_default().to_string(),
+            secret: parts.next().unwrap_or_default().to_string(),
+        }
+    }
+}
+
+pub struct ServerHello {
     pub addr: Ipv4Addr,
     pub prefix: u8,
 }
 
-impl Into<Vec<u8>> for HandshakeMessage {
+impl Into<Vec<u8>> for ServerHello {
     fn into(self) -> Vec<u8> {
         vec![
             self.addr.octets()[0],
@@ -24,7 +50,7 @@ impl Into<Vec<u8>> for HandshakeMessage {
     }
 }
 
-impl From<Vec<u8>> for HandshakeMessage {
+impl From<Vec<u8>> for ServerHello {
     fn from(value: Vec<u8>) -> Self {
         Self {
             addr: Ipv4Addr::new(value[0], value[1], value[2], value[3]),

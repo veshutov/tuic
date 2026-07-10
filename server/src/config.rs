@@ -1,15 +1,16 @@
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use config::{Config, ConfigError, File};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct VpnConfig {
     pub tun: TunConfig,
     pub quic: QuicConfig,
+    pub users: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TunConfig {
     pub name: String,
     pub subnet: String,
@@ -17,7 +18,7 @@ pub struct TunConfig {
     pub setup_nat: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct QuicConfig {
     pub server_name: String,
     pub endpoint_address: SocketAddr,
@@ -33,5 +34,9 @@ impl VpnConfig {
             .add_source(File::with_name(config_file))
             .build()?;
         config.try_deserialize()
+    }
+
+    pub fn auth(&self, username: &str, password: String) -> bool {
+        self.users.get(username) == Some(&password)
     }
 }

@@ -4,19 +4,15 @@ use quinn::Connection;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tracing::info;
-use tuic_common::HandshakeMessage;
+use tuic_common::{ClientHello, MAX_HANDSHAKE_DATA, ServerHello};
 use tun_rs::DeviceBuilder;
 
 use crate::config::VpnConfig;
 use crate::route::setup_vpn_routes;
 
-const MAX_HANDSHAKE_DATA: usize = 100;
-
 pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
-    let mut recv = connection.accept_uni().await?;
-    let handshake_bytes = recv.read_to_end(MAX_HANDSHAKE_DATA).await?;
+    let handshake = handshake(&connection, config).await?;
 
-    let handshake = HandshakeMessage::from(handshake_bytes);
     let addr: Ipv4Addr = handshake.addr;
     let prefix: u8 = handshake.prefix;
 
@@ -76,4 +72,24 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
     connection_read_task.abort();
 
     result
+}
+
+async fn handshake(
+    connection: &Connection,
+    config: &VpnConfig,
+) -> Result<ServerHello, anyhow::Error> {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let client_hello_bytes: Vec<u8> = ClientHello {
+        user: config.user.name.clone(),
+        secret: config.user.secret.clone(),
+    }
+    .into();
+    info!("sending client hello");
+    send.write_all(&client_hello_bytes).await?;
+    send.finish()?;
+
+    let server_hello_bytes = recv.read_to_end(MAX_HANDSHAKE_DATA).await?;
+    let server_hello = ServerHello::from(server_hello_bytes);
+    info!("authentication succeeded");
+    Ok(server_hello)
 }

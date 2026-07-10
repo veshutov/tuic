@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub struct VpnConfig {
     pub tun: TunConfig,
     pub quic: QuicConfig,
+    pub user: UserConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +26,12 @@ pub struct QuicConfig {
     pub receive_buffer_size_kb: usize,
     pub send_buffer_size_kb: usize,
     pub server_cert: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserConfig {
+    pub name: String,
+    pub secret: String,
 }
 
 impl VpnConfig {

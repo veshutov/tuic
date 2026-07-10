@@ -11,3 +11,7 @@ reconnect_interval_ms = 1000
 receive_buffer_size_kb = 2048
 send_buffer_size_kb = 2048
 server_cert = "server_cert.der"
+
+[user]
+name = "name"
+secret = "secret"
