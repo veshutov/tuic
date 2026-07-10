@@ -11,7 +11,7 @@ pub struct RoutesGuard {
 impl Drop for RoutesGuard {
     fn drop(&mut self) {
         if let Err(e) = cleanup_vpn_routes(&self.server_ip, &self.tun) {
-            error!("failed to cleanup routes: {e}");
+            error!("failed to cleanup routes: {e:#}");
         }
     }
 }

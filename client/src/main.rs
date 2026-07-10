@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
                 let connecting = match endpoint.connect(server_address, &server_name) {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("connect failed: {e}, retrying in {backoff:?}");
+                        error!("connect failed: {e:#}, retrying in {backoff:?}");
                         sleep(backoff).await;
                         continue;
                     }
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
                 let connection = match connecting.await {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("handshake failed: {e}, retrying in {backoff:?}");
+                        error!("handshake failed: {e:#}, retrying in {backoff:?}");
                         sleep(backoff).await;
                         continue;
                     }
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
                 info!("connected to server {}", connection.remote_address());
                 match run_tunnel(connection.clone(), &config).await {
                     Ok(_) => error!("session ended, reconnecting..."),
-                    Err(e) => error!("error running tunnel: {e}"),
+                    Err(e) => error!("error running tunnel: {e:#}"),
                 };
                 connection.close(CLOSE_CODE_NORMAL, &[]);
                 sleep(backoff).await;

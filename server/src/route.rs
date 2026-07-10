@@ -35,7 +35,7 @@ pub struct NatGuard;
 impl Drop for NatGuard {
     fn drop(&mut self) {
         if let Err(e) = teardown_vpn_nat() {
-            error!("failed to teardown NAT: {e}");
+            error!("failed to teardown NAT: {e:#}");
         }
     }
 }

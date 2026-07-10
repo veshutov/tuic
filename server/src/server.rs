@@ -132,7 +132,7 @@ impl VpnServer {
         info!("received client hello, user={}", client_hello.user);
 
         if !self.config.auth(&client_hello.user, client_hello.secret) {
-            return Err(anyhow!("authentication failed"));
+            return Err(anyhow!("authentication failed, user={}", client_hello.user));
         }
 
         info!("authentication succeeded, user={}", client_hello.user);
@@ -212,7 +212,7 @@ async fn accept_connections(server: VpnServer) {
         let vpn_server = server.clone();
         server.task_tracker.spawn(async move {
             if let Err(e) = vpn_server.handle_incoming(incoming).await {
-                error!("connection error: {e}");
+                error!("connection error: {e:#}");
             }
         });
     }
