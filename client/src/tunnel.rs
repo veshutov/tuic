@@ -10,6 +10,8 @@ use tun_rs::DeviceBuilder;
 use crate::config::VpnConfig;
 use crate::route::setup_vpn_routes;
 
+const READ_BUF_SIZE: usize = 2048;
+
 pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
     let handshake = handshake(&connection, config).await?;
 
@@ -38,7 +40,7 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
         let device = device.clone();
         let connection = connection.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0u8; 1500];
+            let mut buf = vec![0u8; READ_BUF_SIZE];
             loop {
                 let n = device.recv(&mut buf).await?;
                 connection.send_datagram(Bytes::copy_from_slice(&buf[..n]))?;

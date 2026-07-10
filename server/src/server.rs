@@ -40,7 +40,7 @@ impl std::ops::Deref for VpnServer {
 
 const MAX_CONSECUTIVE_ERRORS: u64 = 5;
 const ERROR_BACKOFF_BASE_MS: u64 = 100;
-const TUN_READ_BUF_SIZE: usize = 65536;
+const READ_BUF_SIZE: usize = 2048;
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl VpnServer {
@@ -220,7 +220,7 @@ async fn accept_connections(server: VpnServer) {
 }
 
 async fn listen_device(server: VpnServer) -> Result<()> {
-    let mut buf = vec![0u8; TUN_READ_BUF_SIZE];
+    let mut buf = vec![0u8; READ_BUF_SIZE];
     let mut consecutive_errors = 0;
 
     loop {
