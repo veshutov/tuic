@@ -20,7 +20,11 @@ use crate::route::setup_vpn_routes;
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    let config = VpnConfig::new("config")?;
+
+    let args: Vec<String> = std::env::args().collect();
+    let config_path = if args.len() > 1 { &args[1] } else { "tuic" };
+    info!("Loading config from path: {config_path}");
+    let config = VpnConfig::new(config_path)?;
     info!("{:#?}", config);
 
     let server_address = config.quic.server_address;
