@@ -1,6 +1,10 @@
 use tokio::signal;
 use tracing::info;
 
+use quinn::VarInt;
+
+pub const CLOSE_CODE_NORMAL: VarInt = VarInt::from_u32(0);
+
 pub async fn await_shutdown() {
     let ctrl_c = async {
         signal::ctrl_c()

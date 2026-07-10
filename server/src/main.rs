@@ -7,6 +7,7 @@ mod ip;
 mod quic;
 mod route;
 mod server;
+mod session;
 
 use crate::config::VpnConfig;
 use crate::server::VpnServer;

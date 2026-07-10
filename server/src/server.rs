@@ -1,18 +1,20 @@
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use dashmap::DashMap;
-use quinn::{Connection, ConnectionError, Endpoint, Incoming, VarInt};
+use quinn::{Connection, Endpoint, Incoming};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
+use tuic_common::CLOSE_CODE_NORMAL;
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
 use crate::ip::IpPool;
 use crate::quic::make_server_endpoint;
 use crate::route::{apply_vpn_nat, source_match, src_dst_ipv4};
+use crate::session::Session;
 
 #[derive(Clone)]
 pub struct VpnServer(Arc<VpnServerState>);
@@ -35,7 +37,6 @@ impl std::ops::Deref for VpnServer {
 const MAX_CONSECUTIVE_ERRORS: u64 = 5;
 const ERROR_BACKOFF_BASE_MS: u64 = 100;
 const TUN_READ_BUF_SIZE: usize = 65536;
-const CLOSE_CODE_NORMAL: VarInt = VarInt::from_u32(0);
 
 impl VpnServer {
     pub fn new(config: VpnConfig) -> Result<Self> {
@@ -108,11 +109,7 @@ impl VpnServer {
             .allocate()
             .ok_or_else(|| anyhow!("Ip pool exhausted"))?;
         self.connections.insert(ip, connection.clone());
-        let session = Session {
-            ip,
-            connection: connection.clone(),
-            server: self.clone(),
-        };
+        let session = Session::new(ip, connection.clone(), self.clone());
         self.send_welcome(connection, ip)?;
         Ok(session)
     }
@@ -123,7 +120,7 @@ impl VpnServer {
         Ok(())
     }
 
-    fn unregister(&self, ip: Ipv4Addr) {
+    pub fn unregister(&self, ip: Ipv4Addr) {
         self.connections.remove(&ip);
         self.ip_pool.release(ip);
     }
@@ -178,25 +175,6 @@ impl VpnServer {
                 }
             }
         }
-    }
-}
-
-struct Session {
-    ip: Ipv4Addr,
-    connection: Connection,
-    server: VpnServer,
-}
-
-impl Session {
-    pub async fn read(&self) -> Result<Bytes, ConnectionError> {
-        self.connection.read_datagram().await
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.server.unregister(self.ip);
-        self.connection.close(CLOSE_CODE_NORMAL, &[]);
     }
 }
 
