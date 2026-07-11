@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use quinn::Connection;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -40,10 +40,16 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
         let device = device.clone();
         let connection = connection.clone();
         tokio::spawn(async move {
-            let mut buf = vec![0u8; READ_BUF_SIZE];
+            let mut buf = BytesMut::with_capacity(READ_BUF_SIZE);
             loop {
+                buf.reserve(READ_BUF_SIZE);
+                unsafe {
+                    buf.set_len(READ_BUF_SIZE);
+                }
+
                 let n = device.recv(&mut buf).await?;
-                connection.send_datagram(Bytes::copy_from_slice(&buf[..n]))?;
+                let packet = buf.split_to(n).freeze();
+                connection.send_datagram(packet)?;
             }
             #[allow(unreachable_code)]
             Ok::<(), anyhow::Error>(())
