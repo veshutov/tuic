@@ -1,8 +1,7 @@
 use anyhow::Result;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use quinn::Connection;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use tracing::info;
 use tuic_common::{ClientHello, MAX_HANDSHAKE_DATA, ServerHello};
 use tun_rs::DeviceBuilder;
@@ -12,7 +11,7 @@ use crate::route::setup_vpn_routes;
 
 const READ_BUF_SIZE: usize = 2048;
 
-pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()> {
+pub async fn run_tunnel(connection: &Connection, config: &VpnConfig) -> Result<()> {
     let handshake = handshake(&connection, config).await?;
 
     let addr: Ipv4Addr = handshake.addr;
@@ -22,13 +21,11 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
     let device_name = &config.tun.name;
     let server_address = &config.quic.server_address.ip().to_string();
     let mtu = config.tun.mtu;
-    let device = Arc::new(
-        DeviceBuilder::new()
-            .name(device_name)
-            .ipv4(addr, prefix, None)
-            .mtu(mtu)
-            .build_async()?,
-    );
+    let device = DeviceBuilder::new()
+        .name(device_name)
+        .ipv4(addr, prefix, None)
+        .mtu(mtu)
+        .build_async()?;
 
     let _guard = if config.tun.setup_routes {
         Some(setup_vpn_routes(server_address, device_name)?)
@@ -36,50 +33,38 @@ pub async fn run_tunnel(connection: Connection, config: &VpnConfig) -> Result<()
         None
     };
 
-    let mut device_recv_task = {
-        let device = device.clone();
-        let connection = connection.clone();
-        tokio::spawn(async move {
-            let mut buf = BytesMut::with_capacity(READ_BUF_SIZE);
-            loop {
-                buf.reserve(READ_BUF_SIZE);
-                unsafe {
-                    buf.set_len(READ_BUF_SIZE);
-                }
-
-                let n = device.recv(&mut buf).await?;
-                let packet = buf.split_to(n).freeze();
-                connection.send_datagram(packet)?;
+    let device_recv_task = async {
+        let mut buf = BytesMut::with_capacity(READ_BUF_SIZE);
+        loop {
+            buf.reserve(READ_BUF_SIZE);
+            unsafe {
+                buf.set_len(READ_BUF_SIZE);
             }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        })
+
+            let n = device.recv(&mut buf).await?;
+            let packet = buf.split_to(n).freeze();
+            connection.send_datagram(packet)?;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
     };
 
-    let mut connection_read_task = {
-        let connection = connection.clone();
+    let connection_read_task = async {
         if let Some(max_datagram_size) = connection.max_datagram_size() {
             info!("connection max_datagram_size = {max_datagram_size}");
         }
-        let device = device.clone();
-        tokio::spawn(async move {
-            loop {
-                let data = connection.read_datagram().await?;
-                device.send(&data).await?;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        })
+        loop {
+            let data = connection.read_datagram().await?;
+            device.send(&data).await?;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
     };
 
-    let result = tokio::select! {
-        res = &mut device_recv_task => res.unwrap_or_else(|e| Err(e.into())),
-        res = &mut connection_read_task => res.unwrap_or_else(|e| Err(e.into())),
-    };
-    device_recv_task.abort();
-    connection_read_task.abort();
-
-    result
+    tokio::select! {
+        res = device_recv_task => res,
+        res = connection_read_task => res,
+    }
 }
 
 async fn handshake(

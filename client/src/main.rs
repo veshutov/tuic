@@ -13,25 +13,23 @@ use crate::config::VpnConfig;
 use crate::quic::make_client_endpoint;
 use crate::tunnel::run_tunnel;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
     info!("loading config from path: {config_path}");
     let config = VpnConfig::from_file(&config_path)?;
+    let quic_config = &config.quic;
     info!("{:#?}", config);
 
-    let server_address = config.quic.server_address;
-    let server_name = config.quic.server_name.clone();
-    let endpoint = make_client_endpoint(&config.quic)?;
-    let backoff = Duration::from_millis(config.quic.reconnect_interval_ms);
+    let endpoint = make_client_endpoint(&quic_config)?;
+    let backoff = Duration::from_millis(quic_config.reconnect_interval_ms);
 
-    let mut main_task = {
-        let endpoint = endpoint.clone();
-        tokio::spawn(async move {
-            loop {
-                let connecting = match endpoint.connect(server_address, &server_name) {
+    let main_task = async {
+        loop {
+            let connecting =
+                match endpoint.connect(quic_config.server_address, &quic_config.server_name) {
                     Ok(c) => c,
                     Err(e) => {
                         error!("connect failed: {e:#}, retrying in {backoff:?}");
@@ -39,34 +37,30 @@ async fn main() -> Result<()> {
                         continue;
                     }
                 };
-                let connection = match connecting.await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("handshake failed: {e:#}, retrying in {backoff:?}");
-                        sleep(backoff).await;
-                        continue;
-                    }
-                };
-                info!("connected to server {}", connection.remote_address());
-                match run_tunnel(connection.clone(), &config).await {
-                    Ok(_) => error!("session ended, reconnecting..."),
-                    Err(e) => error!("error running tunnel: {e:#}"),
-                };
-                connection.close(CLOSE_CODE_NORMAL, &[]);
-                sleep(backoff).await;
-            }
-        })
+            let connection = match connecting.await {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("handshake failed: {e:#}, retrying in {backoff:?}");
+                    sleep(backoff).await;
+                    continue;
+                }
+            };
+            info!("connected to server {}", connection.remote_address());
+            match run_tunnel(&connection, &config).await {
+                Ok(_) => error!("session ended, reconnecting..."),
+                Err(e) => error!("error running tunnel: {e:#}"),
+            };
+            connection.close(CLOSE_CODE_NORMAL, &[]);
+            sleep(backoff).await;
+        }
     };
 
-    let result = tokio::select! {
-        _ = await_shutdown() => {
-            main_task.abort();
-            Ok(())
-        },
-        _ = &mut main_task => Err(anyhow::anyhow!("main task died")),
+    tokio::select! {
+        _ = await_shutdown() => {},
+        _ = main_task => {},
     };
 
     endpoint.close(CLOSE_CODE_NORMAL, &[]);
     endpoint.wait_idle().await;
-    result
+    Ok(())
 }

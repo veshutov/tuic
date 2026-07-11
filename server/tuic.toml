@@ -7,8 +7,8 @@ setup_nat = true
 [quic]
 server_name = "localhost"
 endpoint_address = "0.0.0.0:443"
-receive_buffer_size_kb = 2048
-send_buffer_size_kb = 2048
+receive_buffer_size_kb = 10240
+send_buffer_size_kb = 10240
 server_cert = "server_cert.der"
 server_key = "server_key.der"
 

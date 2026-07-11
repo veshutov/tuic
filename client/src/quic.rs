@@ -25,6 +25,7 @@ fn configure_client(config: &QuicConfig) -> Result<ClientConfig, Error> {
 fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
     let mut transport = TransportConfig::default();
 
+    transport.enable_segmentation_offload(true);
     transport.mtu_discovery_config(Some(MtuDiscoveryConfig::default()));
     transport.datagram_receive_buffer_size(Some(quic_config.receive_buffer_size_kb * 1024));
     transport.datagram_send_buffer_size(quic_config.send_buffer_size_kb * 1024);
