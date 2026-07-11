@@ -57,7 +57,7 @@ fn load_or_generate_cert(
     }
 }
 
-pub fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
+fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
     let mut transport = TransportConfig::default();
 
     transport.mtu_discovery_config(Some(MtuDiscoveryConfig::default()));

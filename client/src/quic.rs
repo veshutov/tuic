@@ -1,4 +1,4 @@
-use ::anyhow::Error;
+use anyhow::Error;
 use quinn::{ClientConfig, Endpoint, MtuDiscoveryConfig, TransportConfig, congestion::BbrConfig};
 use rustls::pki_types::CertificateDer;
 
@@ -22,7 +22,7 @@ fn configure_client(config: &QuicConfig) -> Result<ClientConfig, Error> {
     Ok(ClientConfig::with_root_certificates(Arc::new(certs))?)
 }
 
-pub fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
+fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
     let mut transport = TransportConfig::default();
 
     transport.mtu_discovery_config(Some(MtuDiscoveryConfig::default()));

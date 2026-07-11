@@ -1,5 +1,4 @@
 use anyhow::Result;
-use quinn::VarInt;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -59,14 +58,15 @@ async fn main() -> Result<()> {
         })
     };
 
-    tokio::select! {
+    let result = tokio::select! {
         _ = await_shutdown() => {
             main_task.abort();
+            Ok(())
         },
-        _ = &mut main_task => error!("main task died, exiting..."),
-    }
+        _ = &mut main_task => Err(anyhow::anyhow!("main task died")),
+    };
 
-    endpoint.close(VarInt::from_u32(0), &[]);
+    endpoint.close(CLOSE_CODE_NORMAL, &[]);
     endpoint.wait_idle().await;
-    Ok(())
+    result
 }
