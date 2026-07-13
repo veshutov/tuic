@@ -2,7 +2,7 @@
 
 Simple TUN-QUIC-TUN VPN
 
-Server generates self-signed TLS certificate on startup and then reuses it ('server_cert' and 'server_key' options in config), clients need to load the certificate ('server_cert' option in config).
+Server can generate self-signed TLS certificate on startup or use existing ones ('server_cert' and 'server_key' options in config), clients can load the certificate ('server_cert' option in config) or use native system trust store ('load_native_certs' option in config).
 
 Needs sudo to create TUN device.
 
