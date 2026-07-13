@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use dashmap::DashMap;
 use quinn::{Connection, Endpoint, Incoming};
+use rand::{Rng, rng};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,7 +10,9 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
-use tuic_common::{CLOSE_CODE_NORMAL, ClientHello, MAX_HANDSHAKE_DATA, ServerHello};
+use tuic_common::{
+    CLOSE_CODE_NORMAL, ClientHello, MAX_HANDSHAKE_DATA, NONCE_SIZE, ServerHello,
+};
 use tun_rs::{AsyncDevice, DeviceBuilder};
 
 use crate::config::VpnConfig;
@@ -129,16 +132,30 @@ impl VpnServer {
     }
 
     async fn handshake(&self, connection: &Connection, ip: Ipv4Addr) -> Result<()> {
-        let (mut send, mut recv) = connection.accept_bi().await?;
+        let (mut send, mut recv) = connection.open_bi().await?;
+
+        info!("sending nonce");
+        let mut nonce = [0u8; NONCE_SIZE];
+        rng().fill_bytes(&mut nonce);
+        send.write_all(&nonce).await?;
+
         let client_hello_bytes = recv.read_to_end(MAX_HANDSHAKE_DATA).await?;
-        let client_hello = ClientHello::from(client_hello_bytes);
+        let client_hello = ClientHello::from_vec(client_hello_bytes)?;
         info!("received client hello, user={}", client_hello.user);
 
-        if !self.config.auth(&client_hello.user, client_hello.secret) {
+        let secret = self
+            .config
+            .users
+            .get(&client_hello.user)
+            .context("unknown client")?;
+        if !client_hello.verify(secret, &nonce) {
             return Err(anyhow!("authentication failed, user={}", client_hello.user));
         }
 
-        info!("authentication succeeded, user={}", client_hello.user);
+        info!(
+            "authentication succeeded, assigning ip '{}' to user '{}'",
+            ip, client_hello.user
+        );
         let message: Vec<u8> = ServerHello {
             addr: ip,
             prefix: self.ip_pool.subnet_prefix,
@@ -176,12 +193,14 @@ impl VpnServer {
     async fn handle_incoming(&self, incoming: Incoming) -> Result<()> {
         let connection = incoming.await.context("accepting connection")?;
         let remote_address = connection.remote_address();
+        info!("registring connection, addr={remote_address}");
 
         let session = self
             .register(&connection)
             .await
             .context("registering connection")?;
-        info!("connection accepted, addr={remote_address}");
+        info!("connection registered, addr={remote_address}");
+
         self.handle_session(session).await
     }
 

@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use quinn::Connection;
 use std::net::Ipv4Addr;
 use tracing::info;
-use tuic_common::{ClientHello, MAX_HANDSHAKE_DATA, ServerHello};
+use tuic_common::{ClientHello, MAX_HANDSHAKE_DATA, NONCE_SIZE, ServerHello};
 use tun_rs::DeviceBuilder;
 
 use crate::config::VpnConfig;
@@ -74,13 +74,16 @@ async fn handshake(
     connection: &Connection,
     config: &VpnConfig,
 ) -> Result<ServerHello, anyhow::Error> {
-    let (mut send, mut recv) = connection.open_bi().await?;
-    let client_hello_bytes: Vec<u8> = ClientHello {
-        user: config.user.name.clone(),
-        secret: config.user.secret.clone(),
-    }
-    .into();
+    let (mut send, mut recv) = connection.accept_bi().await?;
+
+    let mut nonce = [0u8; NONCE_SIZE];
+    recv.read_exact(&mut nonce).await?;
+    info!("received server nonce");
+
     info!("sending client hello");
+    let user = &config.user.name;
+    let secret = &config.user.secret;
+    let client_hello_bytes: Vec<u8> = ClientHello::from_secret(user.clone(), secret, &nonce).into();
     send.write_all(&client_hello_bytes).await?;
     send.finish()?;
 

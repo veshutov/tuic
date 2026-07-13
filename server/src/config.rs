@@ -63,8 +63,4 @@ impl VpnConfig {
             .build()?;
         config.try_deserialize()
     }
-
-    pub fn auth(&self, username: &str, password: String) -> bool {
-        self.users.get(username) == Some(&password)
-    }
 }

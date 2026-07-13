@@ -7,3 +7,5 @@ edition = "2024"
 tokio.workspace = true
 quinn.workspace = true
 tracing.workspace = true
+sha2.workspace = true
+anyhow.workspace = true

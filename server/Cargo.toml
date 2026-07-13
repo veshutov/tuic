@@ -16,10 +16,11 @@ etherparse.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
 bytes.workspace = true
+serde.workspace = true
 
 tracing.workspace = true
 tracing-subscriber.workspace = true
-serde.workspace = true
+rand.workspace = true
 dashmap.workspace = true
 config.workspace = true
 anyhow.workspace = true

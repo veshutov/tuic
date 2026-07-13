@@ -1,35 +1,65 @@
+use anyhow::Result;
 use std::net::Ipv4Addr;
 
+use sha2::{Digest, Sha256};
 use tokio::signal;
 use tracing::info;
 
 use quinn::VarInt;
 
-pub const MAX_HANDSHAKE_DATA: usize = 100;
+pub const NONCE_SIZE: usize = 16;
+pub const MAX_HANDSHAKE_DATA: usize = 512;
 pub const CLOSE_CODE_NORMAL: VarInt = VarInt::from_u32(0);
 
 pub struct ClientHello {
     pub user: String,
-    pub secret: String,
+    pub session_secret: Vec<u8>,
+}
+
+impl ClientHello {
+    pub fn from_secret(user: String, secret: &str, nonce: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(secret.as_bytes());
+        hasher.update(nonce);
+        let session_secret = hasher.finalize().to_vec();
+        Self {
+            user: user,
+            session_secret,
+        }
+    }
+
+    pub fn verify(&self, secret: &str, nonce: &[u8]) -> bool {
+        let mut hasher = Sha256::new();
+        hasher.update(secret.as_bytes());
+        hasher.update(nonce);
+        let expected_session_secret = hasher.finalize().to_vec();
+        self.session_secret == expected_session_secret
+    }
 }
 
 impl Into<Vec<u8>> for ClientHello {
     fn into(self) -> Vec<u8> {
         let mut result = Vec::new();
-        let message = format!("{}:{}", self.user, self.secret);
-        result.extend(message.as_bytes());
+        result.extend(self.user.as_bytes());
+        result.extend(":".as_bytes());
+        result.extend(self.session_secret);
         result
     }
 }
 
-impl From<Vec<u8>> for ClientHello {
-    fn from(value: Vec<u8>) -> Self {
-        let message = String::from_utf8(value).unwrap_or_default();
-        let mut parts = message.split(':');
-        Self {
-            user: parts.next().unwrap_or_default().to_string(),
-            secret: parts.next().unwrap_or_default().to_string(),
-        }
+impl ClientHello {
+    pub fn from_vec(value: Vec<u8>) -> Result<Self> {
+        let target_byte = b':';
+        let pos = value
+            .iter()
+            .position(|&b| b == target_byte)
+            .expect("invalid client helo");
+        let user = &value[..pos];
+        let session_secret = &value[pos + 1..];
+        Ok(Self {
+            user: str::from_utf8(user)?.to_owned(),
+            session_secret: session_secret.to_vec(),
+        })
     }
 }
 
