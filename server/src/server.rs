@@ -54,8 +54,11 @@ impl VpnServer {
         let addr: Ipv4Addr = addr.parse().context("invalid subnet address")?;
         let prefix: u8 = prefix.parse().context("invalid subnet prefix")?;
         let ip_pool = IpPool::new(addr, prefix);
-        let device = DeviceBuilder::new()
-            .name(&tun_config.name)
+        let mut device_builder = DeviceBuilder::new();
+        if let Some(name) = &tun_config.name {
+            device_builder = device_builder.name(name)
+        }
+        let device = device_builder
             .ipv4(ip_pool.server_ip(), ip_pool.subnet_prefix, None)
             .mtu(tun_config.mtu)
             .build_async()?;

@@ -12,6 +12,7 @@ tun-rs.workspace = true
 default-net.workspace = true
 quinn.workspace = true
 rustls.workspace = true
+rustls-native-certs.workspace = true
 rcgen.workspace = true
 bytes.workspace = true
 

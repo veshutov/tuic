@@ -17,16 +17,19 @@ pub async fn run_tunnel(connection: &Connection, config: &VpnConfig) -> Result<(
     let addr: Ipv4Addr = handshake.addr;
     let prefix: u8 = handshake.prefix;
 
-    info!("registring tun {addr}/{prefix}");
-    let device_name = &config.tun.name;
     let server_address = &config.quic.server_address.ip().to_string();
     let mtu = config.tun.mtu;
-    let device = DeviceBuilder::new()
-        .name(device_name)
+
+    let mut device_builder = DeviceBuilder::new();
+    if let Some(name) = &config.tun.name {
+        device_builder = device_builder.name(name);
+    }
+    let device = device_builder
         .ipv4(addr, prefix, None)
         .mtu(mtu)
         .build_async()?;
-
+    let device_name = &device.name()?;
+    info!("registred {device_name} {addr}/{prefix}");
     let _guard = if config.tun.setup_routes {
         Some(setup_vpn_routes(server_address, device_name)?)
     } else {

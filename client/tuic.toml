@@ -11,6 +11,7 @@ reconnect_interval_ms = 1000
 receive_buffer_size_kb = 10240
 send_buffer_size_kb = 10240
 server_cert = "../server/server_cert.der"
+load_native_certs = true
 
 [user]
 name = "name"

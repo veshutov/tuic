@@ -11,6 +11,7 @@ default-net = "0.22.0"
 etherparse = "0.20.2"
 quinn = { version = "0.11.11", features = ["rustls-aws-lc-rs", "rustls-ring"] }
 rustls = "0.23.41"
+rustls-native-certs = "0.8.4"
 rcgen = "0.14.8"
 bytes = "1.12.0"
 

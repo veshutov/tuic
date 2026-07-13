@@ -1,8 +1,9 @@
-use anyhow::Error;
+use anyhow::{Context, Error};
 use quinn::{ClientConfig, Endpoint, MtuDiscoveryConfig, TransportConfig, congestion::BbrConfig};
 use rustls::pki_types::CertificateDer;
+use tracing::info;
 
-use std::sync::Arc;
+use std::{fs::read, sync::Arc};
 
 use crate::config::QuicConfig;
 
@@ -15,11 +16,32 @@ pub fn make_client_endpoint(config: &QuicConfig) -> Result<Endpoint, Error> {
 }
 
 fn configure_client(config: &QuicConfig) -> Result<ClientConfig, Error> {
-    let cert_bytes = std::fs::read(&config.server_cert)?;
-    let server_cert = CertificateDer::from(cert_bytes);
-    let mut certs = rustls::RootCertStore::empty();
-    certs.add(server_cert)?;
-    Ok(ClientConfig::with_root_certificates(Arc::new(certs))?)
+    let mut certs_store = rustls::RootCertStore::empty();
+
+    if config.load_native_certs {
+        let load_result = rustls_native_certs::load_native_certs();
+        let errors = load_result.errors;
+        if !errors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "failed to load native certificates {:?}",
+                errors
+            ));
+        }
+        let natinve_certs = load_result.certs;
+        let count = natinve_certs.len();
+        certs_store.add_parsable_certificates(natinve_certs);
+        info!("loaded {} native certs", count)
+    }
+
+    if let Some(server_cert) = &config.server_cert {
+        let cert_bytes = read(server_cert).context("failed to load server certificates")?;
+        certs_store
+            .add(CertificateDer::from(cert_bytes))
+            .context("failed to add server certificate to the store")?;
+        info!("loaded server cert from {server_cert}")
+    }
+
+    Ok(ClientConfig::with_root_certificates(Arc::new(certs_store))?)
 }
 
 fn build_transport_config(quic_config: &QuicConfig) -> TransportConfig {
