@@ -1,7 +1,10 @@
 use anyhow::Result;
+use clap::Parser;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::{Registry, fmt, prelude::*};
 use tuic_common::{CLOSE_CODE_NORMAL, await_shutdown};
 
 mod config;
@@ -13,11 +16,27 @@ use crate::config::VpnConfig;
 use crate::quic::make_client_endpoint;
 use crate::tunnel::run_tunnel;
 
+#[derive(Parser, Debug)]
+#[command(version, about = "Tuic VPN client")]
+struct Args {
+    /// Path to the configuration file, defaults to "tuic"
+    #[arg(value_name = "FILE")]
+    config: Option<String>,
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    let stdout_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_ansi(true)
+        .with_filter(LevelFilter::INFO);
+    Registry::default().with(stdout_layer).init();
 
-    let config_path = std::env::args().nth(1).unwrap_or_else(|| "tuic".into());
+    let args = Args::parse();
+    let config_path = match args.config {
+        Some(path) => path,
+        None => "tuic".into(),
+    };
     info!("loading config from path: {config_path}");
     let config = VpnConfig::from_file(&config_path)?;
     let quic_config = &config.quic;
